@@ -12,7 +12,7 @@ struct MiniserieEpisodesView: View {
         self.model = model
         _store = State(initialValue: MiniserieEpisodesStore(
             service: model.catalog.miniserieTabs,
-            targetURL: CatalogTarget.miniseriesIndexURL,
+            targetURL: show.pageURL.absoluteString,
             tag: show.tag
         ))
     }

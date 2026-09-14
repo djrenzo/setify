@@ -8,6 +8,8 @@ struct ShowGridView: View {
     let shows: [ShowSummary]
     let isLoading: Bool
     let errorMessage: String?
+    let favoriteKind: FavoriteKind
+    let favorites: FavoritesStore
     let onReachEnd: () -> Void
 
     private let columns = [
@@ -19,10 +21,16 @@ struct ShowGridView: View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(shows) { show in
-                    NavigationLink(value: ShowRoute(show: show)) {
-                        ShowTile(show: show)
+                    let favorite = FavoriteItem(show: show, kind: favoriteKind)
+                    ZStack(alignment: .topTrailing) {
+                        NavigationLink(value: ShowRoute(show: show)) {
+                            ShowTile(show: show)
+                        }
+                        .buttonStyle(.plain)
+                        FavoriteHeartButton(isFavorite: favorites.isFavorite(favorite.id)) {
+                            Task { await favorites.toggle(favorite) }
+                        }
                     }
-                    .buttonStyle(.plain)
                     .task {
                         if show.id == shows.last?.id {
                             onReachEnd()
@@ -72,8 +80,8 @@ private struct ShowTile: View {
                 }
             }
         }
-        .frame(height: 168)
-        .frame(maxWidth: .infinity)
+        .aspectRatio(1, contentMode: .fit)
+        .clipped()
         .clipShape(.rect(cornerRadius: 14))
     }
 }

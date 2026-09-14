@@ -36,6 +36,19 @@ struct Channel: Codable, Hashable, Identifiable, Sendable {
     var headerProfile: HeaderProfile
     var isEnabled: Bool
     var tintHex: String
+
+    /// Known channels double as their real-world channel number in Spain, so a plain SF Symbol
+    /// numeral badge reads as a proper channel icon without needing any bundled logo artwork.
+    /// Custom channels the user adds fall back to a generic TV glyph.
+    var iconSymbolName: String {
+        switch (slug ?? shortName).lowercased() {
+        case "telecinco", "t5": "5.circle.fill"
+        case "cuatro": "4.circle.fill"
+        case "la1", "1": "1.circle.fill"
+        case "la2", "2": "2.circle.fill"
+        default: "tv.fill"
+        }
+    }
 }
 
 struct MediaCard: Hashable, Identifiable, Sendable {
@@ -53,12 +66,18 @@ enum PlaybackRequest: Sendable {
     case video(MediaCard)
 }
 
+struct SubtitleTrack: Hashable, Sendable {
+    let url: URL
+    let languageTag: String
+}
+
 struct ResolvedStream: Identifiable, Sendable {
     let id = UUID()
     let title: String
     let url: URL
     let headers: [String: String]
     let allowsHeaderFallback: Bool
+    let subtitles: [SubtitleTrack]
 }
 
 enum PreparationPhase: Sendable, Equatable {

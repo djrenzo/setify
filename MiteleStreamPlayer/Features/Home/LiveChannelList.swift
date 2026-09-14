@@ -98,9 +98,9 @@ private struct ChannelCard: View {
     }
 
     private var channelMark: some View {
-        Text(channel.shortName)
-            .font(.headline.bold())
-            .minimumScaleFactor(0.7)
+        Image(systemName: channel.iconSymbolName)
+            .font(.title2.weight(.bold))
+            .symbolRenderingMode(.hierarchical)
             .frame(width: 46, height: 46)
             .background(.white.opacity(0.16), in: .rect(cornerRadius: 14))
     }

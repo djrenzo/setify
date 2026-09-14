@@ -114,7 +114,7 @@ final class MiniseriesCatalogStore {
                     size: 24
                 )
                 try Task.checkCancellation()
-                shows.append(contentsOf: page.items.map(Self.mapShow))
+                shows.append(contentsOf: page.items.compactMap(Self.mapShow))
                 totalPages = page.totalPages
                 nextPage = page.currentPage + 1
                 isLoading = false
@@ -129,12 +129,18 @@ final class MiniseriesCatalogStore {
         }
     }
 
-    private static func mapShow(_ entry: EditorialEntry) -> MiniserieShow {
-        MiniserieShow(
+    // The tabs endpoint (episodes) needs the miniserie's own page URL as its `url` parameter —
+    // not the catalog listing URL — carried forward from the catalog entry's `image.href`.
+    private static func mapShow(_ entry: EditorialEntry) -> MiniserieShow? {
+        guard let href = entry.imageHref, let pageURL = URL(string: "https://www.mitele.es\(href)") else {
+            return nil
+        }
+        return MiniserieShow(
             id: entry.id,
             tag: entry.id + ".0",
             title: entry.title,
-            posterURL: entry.imageSrc.flatMap(URL.init(string:))
+            posterURL: entry.imageSrc.flatMap(URL.init(string:)),
+            pageURL: pageURL
         )
     }
 }

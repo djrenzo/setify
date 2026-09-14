@@ -18,10 +18,16 @@ struct MiniseriesCatalogView: View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(store.shows) { show in
-                    NavigationLink(value: MiniserieRoute(show: show)) {
-                        MiniserieTile(show: show)
+                    let favorite = FavoriteItem(miniserie: show)
+                    ZStack(alignment: .topTrailing) {
+                        NavigationLink(value: MiniserieRoute(show: show)) {
+                            MiniserieTile(show: show)
+                        }
+                        .buttonStyle(.plain)
+                        FavoriteHeartButton(isFavorite: model.favorites.isFavorite(favorite.id)) {
+                            Task { await model.favorites.toggle(favorite) }
+                        }
                     }
-                    .buttonStyle(.plain)
                     .task {
                         if show.id == store.shows.last?.id {
                             store.loadNextPage()
@@ -70,8 +76,8 @@ private struct MiniserieTile: View {
                 }
             }
         }
-        .frame(height: 168)
-        .frame(maxWidth: .infinity)
+        .aspectRatio(1, contentMode: .fit)
+        .clipped()
         .clipShape(.rect(cornerRadius: 14))
     }
 }

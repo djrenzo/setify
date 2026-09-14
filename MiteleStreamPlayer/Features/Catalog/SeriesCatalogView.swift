@@ -10,6 +10,8 @@ struct SeriesCatalogView: View {
             shows: store.shows,
             isLoading: store.isLoading,
             errorMessage: store.errorMessage,
+            favoriteKind: .serie,
+            favorites: model.favorites,
             onReachEnd: store.loadNextPage
         )
         .navigationTitle("Series")

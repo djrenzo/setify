@@ -53,8 +53,9 @@ private struct ChannelManagementRow: View {
 
     var body: some View {
         HStack {
-            Text(channel.shortName)
-                .font(.caption.bold())
+            Image(systemName: channel.iconSymbolName)
+                .font(.body.weight(.bold))
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.white)
                 .frame(width: 38, height: 38)
                 .background(Color(hex: channel.tintHex), in: .rect(cornerRadius: 11))

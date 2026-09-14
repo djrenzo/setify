@@ -14,21 +14,27 @@ struct PeliculasCatalogView: View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(store.items) { item in
-                    Button {
-                        model.playback.prepare(.video(MediaCard(
-                            id: item.id,
-                            title: item.title,
-                            subtitle: nil,
-                            detail: nil,
-                            duration: nil,
-                            artworkURL: item.posterURL,
-                            pageURL: item.pageURL
-                        )))
-                    } label: {
-                        PeliculaTile(item: item)
+                    let favorite = FavoriteItem(pelicula: item)
+                    ZStack(alignment: .topTrailing) {
+                        Button {
+                            model.playback.prepare(.video(MediaCard(
+                                id: item.id,
+                                title: item.title,
+                                subtitle: nil,
+                                detail: nil,
+                                duration: nil,
+                                artworkURL: item.posterURL,
+                                pageURL: item.pageURL
+                            )))
+                        } label: {
+                            PeliculaTile(item: item)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Reproducir \(item.title)")
+                        FavoriteHeartButton(isFavorite: model.favorites.isFavorite(favorite.id)) {
+                            Task { await model.favorites.toggle(favorite) }
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Reproducir \(item.title)")
                     .task {
                         if item.id == store.items.last?.id {
                             store.loadNextPage()
@@ -74,10 +80,10 @@ private struct PeliculaTile: View {
                 }
             }
         }
-        .frame(height: 168)
-        .frame(maxWidth: .infinity)
+        .aspectRatio(1, contentMode: .fit)
+        .clipped()
         .clipShape(.rect(cornerRadius: 14))
-        .overlay(alignment: .topTrailing) {
+        .overlay(alignment: .bottomTrailing) {
             Image(systemName: "play.circle.fill")
                 .font(.title3)
                 .foregroundStyle(.white)

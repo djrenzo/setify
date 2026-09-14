@@ -67,7 +67,8 @@ actor MediasetStreamResolver: StreamResolving {
             title: channel.name,
             url: url,
             headers: headers,
-            allowsHeaderFallback: !headers.isEmpty
+            allowsHeaderFallback: !headers.isEmpty,
+            subtitles: []
         )
     }
 
@@ -98,7 +99,8 @@ actor MediasetStreamResolver: StreamResolving {
             title: channel.name,
             url: finalURL,
             headers: APIConfiguration.mediasetPlaybackHeaders,
-            allowsHeaderFallback: true
+            allowsHeaderFallback: true,
+            subtitles: subtitleTracks(from: delivery.0)
         )
     }
 
@@ -148,8 +150,18 @@ actor MediasetStreamResolver: StreamResolving {
             title: card.title,
             url: finalURL,
             headers: APIConfiguration.mediasetPlaybackHeaders,
-            allowsHeaderFallback: true
+            allowsHeaderFallback: true,
+            subtitles: subtitleTracks(from: delivery.0)
         )
+    }
+
+    private func subtitleTracks(from caronte: CaronteResponse) -> [SubtitleTrack] {
+        caronte.resolvedSubtitles.compactMap { dto in
+            guard let vtt = dto.vtt?.trimmedNonEmpty, let url = URL(string: vtt), url.scheme == "https" else {
+                return nil
+            }
+            return SubtitleTrack(url: url, languageTag: "es")
+        }
     }
 
     private func signedURL(caronte: CaronteResponse, gbx: String) async throws -> URL {
@@ -279,22 +291,30 @@ private struct CaronteResponse: Decodable, Sendable {
         let stream: String?
     }
 
+    struct SubtitleDTO: Decodable, Sendable {
+        let vtt: String?
+    }
+
     struct Wrapper: Decodable, Sendable {
         let dls: [Delivery]?
         let bbx: String?
+        let subtitles: [SubtitleDTO]?
     }
 
     let dls: [Delivery]?
     let bbx: String?
+    let subtitles: [SubtitleDTO]?
     let response: Wrapper?
 
     var stream: String? { dls?.first?.stream ?? response?.dls?.first?.stream }
     var resolvedBBX: String? { bbx ?? response?.bbx }
+    var resolvedSubtitles: [SubtitleDTO] { subtitles ?? response?.subtitles ?? [] }
 
     init(from decoder: Decoder) throws {
-        enum CodingKeys: String, CodingKey { case dls, bbx, response }
+        enum CodingKeys: String, CodingKey { case dls, bbx, subtitles, response }
         let container = try decoder.container(keyedBy: CodingKeys.self)
         dls = try? container.decode([Delivery].self, forKey: .dls)
+        subtitles = try? container.decode([SubtitleDTO].self, forKey: .subtitles)
         bbx = try? container.decode(String.self, forKey: .bbx)
         response = try? container.decode(Wrapper.self, forKey: .response)
     }

@@ -15,6 +15,7 @@ struct CategoryRootView: View {
         case .programas:
             ShowCatalogView(
                 title: category.title,
+                favoriteKind: .programa,
                 store: ShowCatalogStore(service: model.catalog.showCatalog, refID: CatalogRefID.programas),
                 model: model
             )

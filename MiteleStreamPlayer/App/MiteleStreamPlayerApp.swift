@@ -7,7 +7,7 @@ struct MiteleStreamPlayerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            HomeView(model: model)
+            RootTabView(model: model)
                 .preferredColorScheme(.dark)
         }
     }

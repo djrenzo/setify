@@ -10,6 +10,7 @@ final class AppModel {
     let credentialStatus: CredentialStatusStore
     let vault: CredentialVault
     let catalog: CatalogEnvironment
+    let favorites: FavoritesStore
 
     init(
         channels: ChannelStore,
@@ -17,7 +18,8 @@ final class AppModel {
         playback: PlaybackCoordinator,
         credentialStatus: CredentialStatusStore,
         vault: CredentialVault,
-        catalog: CatalogEnvironment
+        catalog: CatalogEnvironment,
+        favorites: FavoritesStore
     ) {
         self.channels = channels
         self.search = search
@@ -25,6 +27,7 @@ final class AppModel {
         self.credentialStatus = credentialStatus
         self.vault = vault
         self.catalog = catalog
+        self.favorites = favorites
     }
 
     static func live() -> AppModel {
@@ -45,7 +48,8 @@ final class AppModel {
             playback: playback,
             credentialStatus: CredentialStatusStore(vault: vault),
             vault: vault,
-            catalog: CatalogEnvironment.live(client: client)
+            catalog: CatalogEnvironment.live(client: client),
+            favorites: FavoritesStore(repository: JSONFavoritesRepository())
         )
     }
 }

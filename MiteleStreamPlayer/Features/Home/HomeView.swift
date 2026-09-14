@@ -23,7 +23,6 @@ struct HomeView: View {
     @State private var path = NavigationPath()
 
     var body: some View {
-        @Bindable var playback = model.playback
         NavigationStack(path: $path) {
             ZStack {
                 Color.cinemaBackground.ignoresSafeArea()
@@ -38,11 +37,6 @@ struct HomeView: View {
         }
         .tint(Color.cinemaAccent)
         .sheet(item: $sheet, content: sheetContent)
-        .fullScreenCover(item: $playback.stream, onDismiss: model.playback.playerDismissed) {
-            PlayerScreen(stream: $0)
-        }
-        .alert(item: $playback.presentedFailure, content: failureAlert)
-        .overlay { preparationOverlay }
         .task { await loadInitialState() }
         .onDisappear {
             model.search.cancel()
@@ -93,13 +87,6 @@ struct HomeView: View {
     }
 
     @ViewBuilder
-    private var preparationOverlay: some View {
-        if let phase = model.playback.phase {
-            PreparationOverlay(phase: phase, onCancel: model.playback.cancelPreparation)
-        }
-    }
-
-    @ViewBuilder
     private func sheetContent(_ destination: HomeSheet) -> some View {
         switch destination {
         case .credentials:
@@ -110,23 +97,6 @@ struct HomeView: View {
         case .channels:
             ManageChannelsView(store: model.channels)
         }
-    }
-
-    private func failureAlert(_ item: PresentedFailure) -> Alert {
-        let failure = item.failure
-        if case .missingCredentials = failure {
-            return Alert(
-                title: Text(failure.title),
-                message: Text(failure.message),
-                primaryButton: .default(Text("Configurar")) { sheet = .credentials },
-                secondaryButton: .cancel(Text("Ahora no"))
-            )
-        }
-        return Alert(
-            title: Text(failure.title),
-            message: Text(failure.message),
-            dismissButton: .default(Text("Entendido"))
-        )
     }
 
     private func loadInitialState() async {
