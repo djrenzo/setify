@@ -1,6 +1,8 @@
 import AVFoundation
 import Foundation
+import MediaPlayer
 import Observation
+import UIKit
 
 struct PlayerTransport {
     let item: AVPlayerItem
@@ -50,7 +52,9 @@ final class PlayerSession {
     @ObservationIgnored private var statusObservation: NSKeyValueObservation?
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var subtitleTask: Task<Void, Never>?
+    @ObservationIgnored private var artworkTask: Task<Void, Never>?
     @ObservationIgnored private var cues: [SubtitleCue] = []
+    @ObservationIgnored private var nowPlayingArtwork: MPMediaItemArtwork?
 
     init(
         stream: ResolvedStream,
@@ -78,11 +82,14 @@ final class PlayerSession {
         player.play()
         loadSubtitlesIfNeeded()
         addTimeObserverIfNeeded()
+        configureNowPlaying()
     }
 
     func stop() {
         subtitleTask?.cancel()
         subtitleTask = nil
+        artworkTask?.cancel()
+        artworkTask = nil
         if let timeObserver {
             player.removeTimeObserver(timeObserver)
             self.timeObserver = nil
@@ -95,6 +102,7 @@ final class PlayerSession {
             false,
             options: .notifyOthersOnDeactivation
         )
+        clearNowPlaying()
     }
 
     func toggleSubtitles() {
@@ -120,12 +128,13 @@ final class PlayerSession {
     }
 
     private func addTimeObserverIfNeeded() {
-        guard timeObserver == nil, hasSubtitles else { return }
+        guard timeObserver == nil else { return }
         let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             let seconds = time.seconds
             Task { @MainActor [weak self] in
                 self?.updateSubtitleText(at: seconds)
+                self?.updateNowPlayingPlaybackInfo()
             }
         }
     }
@@ -139,6 +148,107 @@ final class PlayerSession {
         if subtitleText != active?.text {
             subtitleText = active?.text
         }
+    }
+
+    /// Drives Control Center / Lock Screen "Now Playing" — AVKit's own automatic mode
+    /// (`updatesNowPlayingInfoCenter`) relies on metadata embedded in the asset itself, which
+    /// these raw HLS streams don't carry, so title/artwork are set manually instead.
+    private func configureNowPlaying() {
+        setUpRemoteCommands()
+        updateNowPlayingInfo()
+        loadArtworkIfNeeded()
+    }
+
+    private func setUpRemoteCommands() {
+        let commandCenter = MPRemoteCommandCenter.shared()
+        commandCenter.nextTrackCommand.isEnabled = false
+        commandCenter.previousTrackCommand.isEnabled = false
+        commandCenter.skipForwardCommand.isEnabled = false
+        commandCenter.skipBackwardCommand.isEnabled = false
+
+        commandCenter.playCommand.isEnabled = true
+        commandCenter.playCommand.addTarget { [weak self] _ in
+            self?.player.play()
+            return .success
+        }
+        commandCenter.pauseCommand.isEnabled = true
+        commandCenter.pauseCommand.addTarget { [weak self] _ in
+            self?.player.pause()
+            return .success
+        }
+        commandCenter.togglePlayPauseCommand.isEnabled = true
+        commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
+            guard let self else { return .commandFailed }
+            if player.timeControlStatus == .playing {
+                player.pause()
+            } else {
+                player.play()
+            }
+            return .success
+        }
+        commandCenter.changePlaybackPositionCommand.isEnabled = !stream.isLive
+        commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let self, !stream.isLive,
+                  let event = event as? MPChangePlaybackPositionCommandEvent else {
+                return .commandFailed
+            }
+            player.seek(to: CMTime(seconds: event.positionTime, preferredTimescale: 600))
+            return .success
+        }
+    }
+
+    private func updateNowPlayingInfo() {
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: stream.title,
+            MPNowPlayingInfoPropertyIsLiveStream: stream.isLive,
+            MPNowPlayingInfoPropertyPlaybackRate: player.rate
+        ]
+        if !stream.isLive {
+            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player.currentTime().seconds
+            if let duration = player.currentItem?.duration.seconds, duration.isFinite {
+                info[MPMediaItemPropertyPlaybackDuration] = duration
+            }
+        }
+        if let nowPlayingArtwork {
+            info[MPMediaItemPropertyArtwork] = nowPlayingArtwork
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func updateNowPlayingPlaybackInfo() {
+        guard var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
+        info[MPNowPlayingInfoPropertyPlaybackRate] = player.rate
+        if !stream.isLive {
+            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player.currentTime().seconds
+            if let duration = player.currentItem?.duration.seconds, duration.isFinite {
+                info[MPMediaItemPropertyPlaybackDuration] = duration
+            }
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func loadArtworkIfNeeded() {
+        guard let url = stream.artworkURL, artworkTask == nil else { return }
+        artworkTask = Task { [weak self] in
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                guard !Task.isCancelled, let image = UIImage(data: data) else { return }
+                let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                self?.nowPlayingArtwork = artwork
+                self?.updateNowPlayingInfo()
+            } catch {
+                // No artwork available; Now Playing still shows title/live status.
+            }
+        }
+    }
+
+    private func clearNowPlaying() {
+        let commandCenter = MPRemoteCommandCenter.shared()
+        commandCenter.playCommand.removeTarget(nil)
+        commandCenter.pauseCommand.removeTarget(nil)
+        commandCenter.togglePlayPauseCommand.removeTarget(nil)
+        commandCenter.changePlaybackPositionCommand.removeTarget(nil)
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
     private func observe(_ item: AVPlayerItem) {

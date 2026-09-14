@@ -5,6 +5,9 @@ import SwiftUI
 struct PlayerScreen: View {
     @Environment(\.dismiss) private var dismiss
     @State private var session: PlayerSession
+    @State private var isLandscape = true
+    @State private var showsOverlay = true
+    @State private var hideTask: Task<Void, Never>?
 
     init(stream: ResolvedStream) {
         _session = State(initialValue: PlayerSession(stream: stream))
@@ -13,15 +16,26 @@ struct PlayerScreen: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            PlayerControllerView(player: session.player)
+            PlayerControllerView(player: session.player, onTap: toggleOverlay)
                 .ignoresSafeArea()
             statusOverlay
             subtitleOverlay
-            topBar
+            if showsOverlay {
+                topBar.transition(.opacity)
+            }
         }
+        .animation(.easeInOut(duration: 0.2), value: showsOverlay)
         .statusBarHidden()
-        .onAppear { session.start() }
-        .onDisappear { session.stop() }
+        .onAppear {
+            session.start()
+            OrientationController.apply(.landscape)
+            scheduleOverlayHide()
+        }
+        .onDisappear {
+            session.stop()
+            hideTask?.cancel()
+            OrientationController.apply(.allButUpsideDown)
+        }
     }
 
     @ViewBuilder
@@ -37,7 +51,7 @@ struct PlayerScreen: View {
                     .padding(.vertical, 6)
                     .background(.black.opacity(0.65), in: .rect(cornerRadius: 6))
                     .padding(.horizontal, 32)
-                    .padding(.bottom, 90)
+                    .padding(.bottom, isLandscape ? 30 : 90)
             }
         }
     }
@@ -63,13 +77,6 @@ struct PlayerScreen: View {
     private var topBar: some View {
         VStack {
             HStack {
-                Button(action: close) {
-                    Image(systemName: "xmark")
-                        .font(.headline)
-                        .frame(width: 42, height: 42)
-                        .background(.black.opacity(0.55), in: .circle)
-                }
-                .accessibilityLabel("Cerrar reproductor")
                 Spacer()
                 Text(session.title)
                     .font(.subheadline.weight(.semibold))
@@ -78,16 +85,24 @@ struct PlayerScreen: View {
                     .padding(.vertical, 8)
                     .background(.black.opacity(0.55), in: .capsule)
                 Spacer()
-                if session.hasSubtitles {
-                    Button(action: session.toggleSubtitles) {
-                        Image(systemName: session.subtitlesEnabled ? "captions.bubble.fill" : "captions.bubble")
+                HStack(spacing: 10) {
+                    Button(action: toggleOrientation) {
+                        Image(systemName: isLandscape ? "iphone" : "iphone.landscape")
                             .font(.headline)
                             .frame(width: 42, height: 42)
                             .background(.black.opacity(0.55), in: .circle)
                     }
-                    .accessibilityLabel(session.subtitlesEnabled ? "Desactivar subtítulos" : "Activar subtítulos")
-                } else {
-                    Color.clear.frame(width: 42, height: 42)
+                    .accessibilityLabel(isLandscape ? "Cambiar a vertical" : "Cambiar a horizontal")
+
+                    if session.hasSubtitles {
+                        Button(action: session.toggleSubtitles) {
+                            Image(systemName: session.subtitlesEnabled ? "captions.bubble.fill" : "captions.bubble")
+                                .font(.headline)
+                                .frame(width: 42, height: 42)
+                                .background(.black.opacity(0.55), in: .circle)
+                        }
+                        .accessibilityLabel(session.subtitlesEnabled ? "Desactivar subtítulos" : "Activar subtítulos")
+                    }
                 }
             }
             .foregroundStyle(.white)
@@ -99,6 +114,29 @@ struct PlayerScreen: View {
     private func close() {
         session.stop()
         dismiss()
+    }
+
+    private func toggleOrientation() {
+        isLandscape.toggle()
+        OrientationController.apply(isLandscape ? .landscape : .portrait)
+    }
+
+    private func toggleOverlay() {
+        showsOverlay.toggle()
+        if showsOverlay {
+            scheduleOverlayHide()
+        } else {
+            hideTask?.cancel()
+        }
+    }
+
+    private func scheduleOverlayHide() {
+        hideTask?.cancel()
+        hideTask = Task {
+            try? await Task.sleep(for: .seconds(3.5))
+            guard !Task.isCancelled else { return }
+            showsOverlay = false
+        }
     }
 }
 
@@ -130,6 +168,11 @@ private struct PlayerFailureView: View {
 
 private struct PlayerControllerView: UIViewControllerRepresentable {
     let player: AVPlayer
+    let onTap: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onTap: onTap)
+    }
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
@@ -138,10 +181,39 @@ private struct PlayerControllerView: UIViewControllerRepresentable {
         controller.videoGravity = .resizeAspect
         controller.allowsPictureInPicturePlayback = false
         controller.updatesNowPlayingInfoCenter = false
+
+        // Added directly to AVPlayerViewController's own view (rather than as a separate SwiftUI
+        // overlay gesture) so it observes the same taps AVKit uses to show/hide its native
+        // controls, instead of competing with them for the touch.
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap))
+        tap.delegate = context.coordinator
+        tap.cancelsTouchesInView = false
+        controller.view.addGestureRecognizer(tap)
+
         return controller
     }
 
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
         controller.player = player
+        context.coordinator.onTap = onTap
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onTap: () -> Void
+
+        init(onTap: @escaping () -> Void) {
+            self.onTap = onTap
+        }
+
+        @objc func handleTap() {
+            onTap()
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            true
+        }
     }
 }

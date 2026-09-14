@@ -78,6 +78,8 @@ struct ResolvedStream: Identifiable, Sendable {
     let headers: [String: String]
     let allowsHeaderFallback: Bool
     let subtitles: [SubtitleTrack]
+    let artworkURL: URL?
+    let isLive: Bool
 }
 
 enum PreparationPhase: Sendable, Equatable {

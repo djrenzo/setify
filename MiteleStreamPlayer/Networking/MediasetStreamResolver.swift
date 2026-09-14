@@ -68,7 +68,9 @@ actor MediasetStreamResolver: StreamResolving {
             url: url,
             headers: headers,
             allowsHeaderFallback: !headers.isEmpty,
-            subtitles: []
+            subtitles: [],
+            artworkURL: nil,
+            isLive: true
         )
     }
 
@@ -100,7 +102,9 @@ actor MediasetStreamResolver: StreamResolving {
             url: finalURL,
             headers: APIConfiguration.mediasetPlaybackHeaders,
             allowsHeaderFallback: true,
-            subtitles: subtitleTracks(from: delivery.0)
+            subtitles: subtitleTracks(from: delivery.0),
+            artworkURL: nil,
+            isLive: true
         )
     }
 
@@ -151,7 +155,9 @@ actor MediasetStreamResolver: StreamResolving {
             url: finalURL,
             headers: APIConfiguration.mediasetPlaybackHeaders,
             allowsHeaderFallback: true,
-            subtitles: subtitleTracks(from: delivery.0)
+            subtitles: subtitleTracks(from: delivery.0),
+            artworkURL: card.artworkURL,
+            isLive: false
         )
     }
 
