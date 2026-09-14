@@ -1,0 +1,145 @@
+import SwiftUI
+
+enum DiscoveryMode: String, CaseIterable, Identifiable {
+    case live = "Directo"
+    case search = "Buscar"
+
+    var id: Self { self }
+}
+
+private enum HomeSheet: String, Identifiable {
+    case credentials
+    case channels
+
+    var id: String { rawValue }
+}
+
+@MainActor
+struct HomeView: View {
+    let model: AppModel
+
+    @State private var mode = DiscoveryMode.live
+    @State private var sheet: HomeSheet?
+
+    var body: some View {
+        @Bindable var playback = model.playback
+        NavigationStack {
+            ZStack {
+                Color.cinemaBackground.ignoresSafeArea()
+                content
+            }
+            .navigationTitle("Señales")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { toolbarContent }
+        }
+        .tint(Color.cinemaAccent)
+        .sheet(item: $sheet, content: sheetContent)
+        .fullScreenCover(item: $playback.stream, onDismiss: model.playback.playerDismissed) {
+            PlayerScreen(stream: $0)
+        }
+        .alert(item: $playback.presentedFailure, content: failureAlert)
+        .overlay { preparationOverlay }
+        .task { await loadInitialState() }
+        .onDisappear {
+            model.search.cancel()
+            model.playback.cancelPreparation()
+        }
+    }
+
+    private var content: some View {
+        ScrollView {
+            LazyVStack {
+                HeroView(
+                    liveCount: model.channels.enabledChannels.count,
+                    hasCredentials: model.credentialStatus.hasCredentials,
+                    onConfigure: { sheet = .credentials }
+                )
+                modePicker
+                if mode == .live {
+                    LiveChannelList(
+                        store: model.channels,
+                        onPlay: playChannel,
+                        onManage: { sheet = .channels }
+                    )
+                } else {
+                    VODSearchView(store: model.search, onPlay: playVideo)
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.bottom, 36)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private var modePicker: some View {
+        Picker("Contenido", selection: $mode) {
+            ForEach(DiscoveryMode.allCases) { option in
+                Text(option.rawValue).tag(option)
+            }
+        }
+        .pickerStyle(.segmented)
+        .padding(.vertical, 8)
+        .accessibilityLabel("Tipo de contenido")
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Button { sheet = .credentials } label: {
+                Image(systemName: model.credentialStatus.hasCredentials ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.exclamationmark")
+            }
+            .accessibilityLabel("Sesión del prototipo")
+        }
+    }
+
+    @ViewBuilder
+    private var preparationOverlay: some View {
+        if let phase = model.playback.phase {
+            PreparationOverlay(phase: phase, onCancel: model.playback.cancelPreparation)
+        }
+    }
+
+    @ViewBuilder
+    private func sheetContent(_ destination: HomeSheet) -> some View {
+        switch destination {
+        case .credentials:
+            PrototypeSettingsView(vault: model.vault) {
+                await model.credentialStatus.refresh()
+                await model.playback.invalidateIdentity()
+            }
+        case .channels:
+            ManageChannelsView(store: model.channels)
+        }
+    }
+
+    private func failureAlert(_ item: PresentedFailure) -> Alert {
+        let failure = item.failure
+        if case .missingCredentials = failure {
+            return Alert(
+                title: Text(failure.title),
+                message: Text(failure.message),
+                primaryButton: .default(Text("Configurar")) { sheet = .credentials },
+                secondaryButton: .cancel(Text("Ahora no"))
+            )
+        }
+        return Alert(
+            title: Text(failure.title),
+            message: Text(failure.message),
+            dismissButton: .default(Text("Entendido"))
+        )
+    }
+
+    private func loadInitialState() async {
+        async let channels: Void = model.channels.load()
+        async let credentials: Void = model.credentialStatus.refresh()
+        _ = await (channels, credentials)
+    }
+
+    private func playChannel(_ channel: Channel) {
+        model.playback.prepare(.channel(channel))
+    }
+
+    private func playVideo(_ card: MediaCard) {
+        model.playback.prepare(.video(card))
+    }
+}

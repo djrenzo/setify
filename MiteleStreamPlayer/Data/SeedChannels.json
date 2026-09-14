@@ -1,0 +1,52 @@
+[
+  {
+    "id": "9DA671FD-54ED-4F87-8CB4-7AB679A2A8EE",
+    "name": "Telecinco",
+    "shortName": "T5",
+    "source": "mediaset",
+    "slug": "telecinco",
+    "headerProfile": "mediaset",
+    "isEnabled": true,
+    "tintHex": "24A8FF"
+  },
+  {
+    "id": "0C453199-106B-46CE-A3C1-86DAF1666E0B",
+    "name": "Cuatro",
+    "shortName": "4",
+    "source": "mediaset",
+    "slug": "cuatro",
+    "headerProfile": "mediaset",
+    "isEnabled": true,
+    "tintHex": "FF4D5F"
+  },
+  {
+    "id": "3CC0234A-0B7C-4A68-828B-E27B7D9E7A77",
+    "name": "Factoría de Ficción",
+    "shortName": "FDF",
+    "source": "mediaset",
+    "slug": "factoria-de-ficcion",
+    "headerProfile": "mediaset",
+    "isEnabled": true,
+    "tintHex": "A96BFF"
+  },
+  {
+    "id": "8B3BCC1C-A7F4-4B91-AD02-067082A6371F",
+    "name": "RTVE La 1",
+    "shortName": "1",
+    "source": "direct",
+    "directURL": "https://rtvelivestream.rtve.es/rtvesec/la1/la1_main_dvr_720.m3u8",
+    "headerProfile": "rtve",
+    "isEnabled": true,
+    "tintHex": "2E7DFF"
+  },
+  {
+    "id": "D0EE8F2F-C90D-4501-8BA4-772068147C57",
+    "name": "RTVE La 2",
+    "shortName": "2",
+    "source": "direct",
+    "directURL": "https://rtvelivestream.rtve.es/rtvesec/la2/la2_main_dvr_720.m3u8",
+    "headerProfile": "rtve",
+    "isEnabled": true,
+    "tintHex": "22A989"
+  }
+]

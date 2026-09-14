@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#312E81"/>
+      <stop offset="100%" stop-color="#6D28D9"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Full-bleed opaque background; iOS applies its own corner mask -->
+  <rect x="0" y="0" width="1024" height="1024" fill="url(#bg)"/>
+
+  <!-- Minimalist screen frame -->
+  <rect x="272" y="332" width="480" height="360" rx="48"
+        fill="none" stroke="#FFFFFF" stroke-width="28" stroke-opacity="0.9"/>
+
+  <!-- Play triangle, optically centered -->
+  <path d="M462 432 L622 512 L462 592 Z" fill="#FFFFFF"/>
+</svg>

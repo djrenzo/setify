@@ -1,2 +1,2 @@
-# setify
-mediasetify ios app
+# podcastApp
+Developing a podcast ios app

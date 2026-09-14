@@ -1,0 +1,88 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 1.2.0)"
+        required: true
+        default: "1.0.0"
+      app_name:
+        description: "App display name"
+        required: true
+        default: "Setify"
+      bundle_id:
+        description: "Bundle identifier (e.g. com.example.mygallery)"
+        required: true
+        default: "com.djrenzo.Setify"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Inject app icon
+        run: |
+          # Render straight from the vector source at 1024x1024 — sips can only scale an
+          # existing raster up, which just blurs/upscales the smaller PWA PNG rather than
+          # producing real 1024px detail.
+          brew install librsvg
+          rsvg-convert -w 1024 -h 1024 public/icon.svg \
+            -o MiteleStreamPlayer/Assets.xcassets/AppIcon.appiconset/AppIcon.png
+          python3 - <<'EOF'
+          import json
+          path = 'MiteleStreamPlayer/Assets.xcassets/AppIcon.appiconset/Contents.json'
+          with open(path) as f:
+              data = json.load(f)
+          data['images'][0]['filename'] = 'AppIcon.png'
+          with open(path, 'w') as f:
+              json.dump(data, f, indent=2)
+          EOF
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build archive
+        run: |
+          xcodebuild \
+            -project MiteleStreamPlayer.xcodeproj \
+            -scheme MiteleStreamPlayer \
+            -sdk iphoneos \
+            -configuration Release \
+            -archivePath build/MiteleStreamPlayer.xcarchive \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            MARKETING_VERSION="${{ inputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ inputs.version }}" \
+            PRODUCT_NAME="${{ inputs.app_name }}" \
+            PRODUCT_BUNDLE_IDENTIFIER="${{ inputs.bundle_id }}"
+
+      - name: Create IPA
+        run: |
+          mkdir -p build/Payload
+          # Find the .app regardless of PRODUCT_NAME
+          APP_PATH=$(find build/MiteleStreamPlayer.xcarchive/Products/Applications \
+            -maxdepth 1 -name '*.app' | head -1)
+          cp -R "$APP_PATH" build/Payload/
+          cd build
+          zip -r ${{ inputs.app_name }}.ipa Payload
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: ${{ inputs.app_name }} v${{ inputs.version }}
+          generate_release_notes: true
+          files: build/${{ inputs.app_name }}.ipa
