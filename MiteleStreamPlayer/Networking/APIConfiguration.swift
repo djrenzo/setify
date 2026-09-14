@@ -50,6 +50,13 @@ enum APIConfiguration {
             "Accept": "application/json"
         ]
     }
+
+    // Unauthenticated legacy bitban scrape (editorial index / tabs) — no session cookie sent.
+    static let scrapeHeaders = [
+        "User-Agent": firefoxUserAgent,
+        "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
+        "Accept-Language": "es-ES,es;q=0.9"
+    ]
 }
 
 enum APIURL {

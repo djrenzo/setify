@@ -20,16 +20,6 @@
     "tintHex": "FF4D5F"
   },
   {
-    "id": "3CC0234A-0B7C-4A68-828B-E27B7D9E7A77",
-    "name": "Factoría de Ficción",
-    "shortName": "FDF",
-    "source": "mediaset",
-    "slug": "factoria-de-ficcion",
-    "headerProfile": "mediaset",
-    "isEnabled": true,
-    "tintHex": "A96BFF"
-  },
-  {
     "id": "8B3BCC1C-A7F4-4B91-AD02-067082A6371F",
     "name": "RTVE La 1",
     "shortName": "1",

@@ -20,10 +20,11 @@ struct HomeView: View {
 
     @State private var mode = DiscoveryMode.live
     @State private var sheet: HomeSheet?
+    @State private var path = NavigationPath()
 
     var body: some View {
         @Bindable var playback = model.playback
-        NavigationStack {
+        NavigationStack(path: $path) {
             ZStack {
                 Color.cinemaBackground.ignoresSafeArea()
                 content
@@ -31,6 +32,9 @@ struct HomeView: View {
             .navigationTitle("Señales")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
+            .navigationDestination(for: CatalogCategory.self) { category in
+                CategoryRootView(category: category, model: model)
+            }
         }
         .tint(Color.cinemaAccent)
         .sheet(item: $sheet, content: sheetContent)
@@ -49,11 +53,7 @@ struct HomeView: View {
     private var content: some View {
         ScrollView {
             LazyVStack {
-                HeroView(
-                    liveCount: model.channels.enabledChannels.count,
-                    hasCredentials: model.credentialStatus.hasCredentials,
-                    onConfigure: { sheet = .credentials }
-                )
+                CategoryGridView(onSelect: { path.append($0) })
                 modePicker
                 if mode == .live {
                     LiveChannelList(
