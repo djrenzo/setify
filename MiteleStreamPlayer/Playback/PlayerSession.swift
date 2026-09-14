@@ -2,7 +2,6 @@ import AVFoundation
 import Foundation
 import MediaPlayer
 import Observation
-import UIKit
 
 struct PlayerTransport {
     let item: AVPlayerItem
@@ -52,9 +51,7 @@ final class PlayerSession {
     @ObservationIgnored private var statusObservation: NSKeyValueObservation?
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var subtitleTask: Task<Void, Never>?
-    @ObservationIgnored private var artworkTask: Task<Void, Never>?
     @ObservationIgnored private var cues: [SubtitleCue] = []
-    @ObservationIgnored private var nowPlayingArtwork: MPMediaItemArtwork?
 
     init(
         stream: ResolvedStream,
@@ -88,8 +85,6 @@ final class PlayerSession {
     func stop() {
         subtitleTask?.cancel()
         subtitleTask = nil
-        artworkTask?.cancel()
-        artworkTask = nil
         if let timeObserver {
             player.removeTimeObserver(timeObserver)
             self.timeObserver = nil
@@ -152,11 +147,12 @@ final class PlayerSession {
 
     /// Drives Control Center / Lock Screen "Now Playing" — AVKit's own automatic mode
     /// (`updatesNowPlayingInfoCenter`) relies on metadata embedded in the asset itself, which
-    /// these raw HLS streams don't carry, so title/artwork are set manually instead.
+    /// these raw HLS streams don't carry, so title/status are set manually instead.
+    /// Artwork is intentionally not set here — loading it (network fetch + UIImage decode +
+    /// MPMediaItemArtwork) reliably crashed VOD playback; needs a safer approach before retrying.
     private func configureNowPlaying() {
         setUpRemoteCommands()
         updateNowPlayingInfo()
-        loadArtworkIfNeeded()
     }
 
     private func setUpRemoteCommands() {
@@ -204,9 +200,6 @@ final class PlayerSession {
                 info[MPMediaItemPropertyPlaybackDuration] = duration
             }
         }
-        if let nowPlayingArtwork {
-            info[MPMediaItemPropertyArtwork] = nowPlayingArtwork
-        }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
@@ -220,21 +213,6 @@ final class PlayerSession {
             }
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-    }
-
-    private func loadArtworkIfNeeded() {
-        guard let url = stream.artworkURL, artworkTask == nil else { return }
-        artworkTask = Task { [weak self] in
-            do {
-                let (data, _) = try await URLSession.shared.data(from: url)
-                guard !Task.isCancelled, let image = UIImage(data: data) else { return }
-                let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
-                self?.nowPlayingArtwork = artwork
-                self?.updateNowPlayingInfo()
-            } catch {
-                // No artwork available; Now Playing still shows title/live status.
-            }
-        }
     }
 
     private func clearNowPlaying() {
