@@ -14,27 +14,26 @@ struct PeliculasCatalogView: View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(store.items) { item in
-                    let favorite = FavoriteItem(pelicula: item)
-                    ZStack(alignment: .topTrailing) {
-                        Button {
-                            model.playback.prepare(.video(MediaCard(
-                                id: item.id,
-                                title: item.title,
-                                subtitle: nil,
-                                detail: nil,
-                                duration: nil,
-                                artworkURL: item.posterURL,
-                                pageURL: item.pageURL
-                            )))
-                        } label: {
-                            PeliculaTile(item: item)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Reproducir \(item.title)")
-                        FavoriteHeartButton(isFavorite: model.favorites.isFavorite(favorite.id)) {
-                            Task { await model.favorites.toggle(favorite) }
+                    Button {
+                        model.playback.prepare(.video(MediaCard(
+                            id: item.id,
+                            title: item.title,
+                            subtitle: nil,
+                            detail: nil,
+                            duration: nil,
+                            artworkURL: item.posterURL,
+                            pageURL: item.pageURL
+                        )))
+                    } label: {
+                        PeliculaTile(
+                            item: item,
+                            isFavorite: model.favorites.isFavorite(FavoriteItem(pelicula: item).id)
+                        ) {
+                            Task { await model.favorites.toggle(FavoriteItem(pelicula: item)) }
                         }
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Reproducir \(item.title)")
                     .task {
                         if item.id == store.items.last?.id {
                             store.loadNextPage()
@@ -61,33 +60,22 @@ struct PeliculasCatalogView: View {
 
 private struct PeliculaTile: View {
     let item: FlatCatalogItem
+    let isFavorite: Bool
+    let onToggleFavorite: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            artwork
-            Text(item.title).font(.subheadline.bold()).foregroundStyle(.white).lineLimit(2)
-        }
-    }
-
-    private var artwork: some View {
-        AsyncImage(url: item.posterURL) { phase in
-            switch phase {
-            case .success(let image): image.resizable().scaledToFill()
-            default:
-                ZStack {
-                    Color.cinemaSurfaceRaised
-                    Image(systemName: "film").foregroundStyle(.secondary)
+            SquarePosterImage(url: item.posterURL)
+                .overlay(alignment: .topTrailing) {
+                    FavoriteHeartButton(isFavorite: isFavorite, onToggle: onToggleFavorite)
                 }
-            }
-        }
-        .aspectRatio(1, contentMode: .fit)
-        .clipped()
-        .clipShape(.rect(cornerRadius: 14))
-        .overlay(alignment: .bottomTrailing) {
-            Image(systemName: "play.circle.fill")
-                .font(.title3)
-                .foregroundStyle(.white)
-                .padding(8)
+                .overlay(alignment: .bottomTrailing) {
+                    Image(systemName: "play.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.white)
+                        .padding(8)
+                }
+            Text(item.title).font(.subheadline.bold()).foregroundStyle(.white).lineLimit(2)
         }
     }
 }

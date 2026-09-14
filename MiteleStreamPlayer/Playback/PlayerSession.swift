@@ -9,85 +9,24 @@ struct PlayerTransport {
 
 @MainActor
 protocol PlayerItemBuilding {
-    func standardItem(for stream: ResolvedStream) async -> PlayerTransport
-    func fallbackItem(for stream: ResolvedStream) async -> PlayerTransport?
+    func standardItem(for stream: ResolvedStream) -> PlayerTransport
+    func fallbackItem(for stream: ResolvedStream) -> PlayerTransport?
 }
 
 @MainActor
 struct AVPlayerItemFactory: PlayerItemBuilding {
-    func standardItem(for stream: ResolvedStream) async -> PlayerTransport {
+    func standardItem(for stream: ResolvedStream) -> PlayerTransport {
         let options = ["AVURLAssetHTTPHeaderFieldsKey": stream.headers]
         let asset = AVURLAsset(url: stream.url, options: options)
-        let item = await Self.playerItem(for: asset, subtitles: stream.subtitles)
-        return PlayerTransport(item: item, resourceLoader: nil)
+        return PlayerTransport(item: AVPlayerItem(asset: asset), resourceLoader: nil)
     }
 
-    func fallbackItem(for stream: ResolvedStream) async -> PlayerTransport? {
+    func fallbackItem(for stream: ResolvedStream) -> PlayerTransport? {
         guard let url = HeaderResourceLoader.customURL(from: stream.url) else { return nil }
         let loader = HeaderResourceLoader(headers: stream.headers)
         let asset = AVURLAsset(url: url)
         asset.resourceLoader.setDelegate(loader, queue: loader.resourceQueue)
-        let item = await Self.playerItem(for: asset, subtitles: stream.subtitles)
-        return PlayerTransport(item: item, resourceLoader: loader)
-    }
-
-    /// Builds a plain item when there are no subtitles to attach. Otherwise composes the video
-    /// asset with the WebVTT sidecar tracks so AVKit's native controls expose a subtitle picker.
-    /// If composing fails for any reason (e.g. the stream can't be composed), falls back to plain
-    /// playback without subtitles rather than breaking video.
-    private static func playerItem(for asset: AVURLAsset, subtitles: [SubtitleTrack]) async -> AVPlayerItem {
-        guard !subtitles.isEmpty,
-              let composition = try? await composedAsset(videoAsset: asset, subtitles: subtitles) else {
-            return AVPlayerItem(asset: asset)
-        }
-        return AVPlayerItem(asset: composition)
-    }
-
-    private static func composedAsset(
-        videoAsset: AVURLAsset,
-        subtitles: [SubtitleTrack]
-    ) async throws -> AVComposition {
-        let composition = AVMutableComposition()
-        let duration = try await videoAsset.load(.duration)
-        let timeRange = CMTimeRange(start: .zero, duration: duration)
-
-        // Video/audio insertion failures must propagate (not be swallowed) — an empty
-        // composition would silently produce a broken, non-playing item.
-        for mediaType in [AVMediaType.video, .audio] {
-            let tracks = try await videoAsset.loadTracks(withMediaType: mediaType)
-            for track in tracks {
-                guard let compositionTrack = composition.addMutableTrack(
-                    withMediaType: mediaType,
-                    preferredTrackID: kCMPersistentTrackID_Invalid
-                ) else { continue }
-                try compositionTrack.insertTimeRange(timeRange, of: track, at: .zero)
-            }
-        }
-
-        // A single bad subtitle track shouldn't take down the others or the video itself.
-        for subtitle in subtitles {
-            try? await insertSubtitleTrack(subtitle, into: composition)
-        }
-        return composition
-    }
-
-    private static func insertSubtitleTrack(
-        _ subtitle: SubtitleTrack,
-        into composition: AVMutableComposition
-    ) async throws {
-        let subtitleAsset = AVURLAsset(url: subtitle.url)
-        guard let textTrack = try await subtitleAsset.loadTracks(withMediaType: .text).first,
-              let compositionTrack = composition.addMutableTrack(
-                withMediaType: .text,
-                preferredTrackID: kCMPersistentTrackID_Invalid
-              ) else { return }
-        let subtitleDuration = try await subtitleAsset.load(.duration)
-        try compositionTrack.insertTimeRange(
-            CMTimeRange(start: .zero, duration: subtitleDuration),
-            of: textTrack,
-            at: .zero
-        )
-        compositionTrack.extendedLanguageTag = subtitle.languageTag
+        return PlayerTransport(item: AVPlayerItem(asset: asset), resourceLoader: loader)
     }
 }
 
@@ -100,12 +39,18 @@ final class PlayerSession {
     var isLoading = true
     var isUsingFallback = false
     var failure: PlaybackFailure?
+    var subtitlesEnabled = true
+    var subtitleText: String?
+
+    var hasSubtitles: Bool { !stream.subtitles.isEmpty }
 
     @ObservationIgnored private let stream: ResolvedStream
     @ObservationIgnored private let factory: any PlayerItemBuilding
-    @ObservationIgnored private var transport: PlayerTransport?
+    @ObservationIgnored private var transport: PlayerTransport
     @ObservationIgnored private var statusObservation: NSKeyValueObservation?
-    @ObservationIgnored private var itemTask: Task<Void, Never>?
+    @ObservationIgnored private var timeObserver: Any?
+    @ObservationIgnored private var subtitleTask: Task<Void, Never>?
+    @ObservationIgnored private var cues: [SubtitleCue] = []
 
     init(
         stream: ResolvedStream,
@@ -114,7 +59,10 @@ final class PlayerSession {
         self.stream = stream
         self.factory = factory
         title = stream.title
-        player = AVPlayer()
+        let initial = factory.standardItem(for: stream)
+        transport = initial
+        player = AVPlayer(playerItem: initial.item)
+        observe(initial.item)
     }
 
     func start() {
@@ -127,20 +75,18 @@ final class PlayerSession {
             isLoading = false
             return
         }
-        guard itemTask == nil else { return }
-        isLoading = true
-        itemTask = Task { [weak self] in
-            guard let self else { return }
-            let initial = await factory.standardItem(for: stream)
-            guard !Task.isCancelled else { return }
-            attach(initial)
-            player.play()
-        }
+        player.play()
+        loadSubtitlesIfNeeded()
+        addTimeObserverIfNeeded()
     }
 
     func stop() {
-        itemTask?.cancel()
-        itemTask = nil
+        subtitleTask?.cancel()
+        subtitleTask = nil
+        if let timeObserver {
+            player.removeTimeObserver(timeObserver)
+            self.timeObserver = nil
+        }
         statusObservation?.invalidate()
         statusObservation = nil
         player.pause()
@@ -151,10 +97,48 @@ final class PlayerSession {
         )
     }
 
-    private func attach(_ transport: PlayerTransport) {
-        self.transport = transport
-        observe(transport.item)
-        player.replaceCurrentItem(with: transport.item)
+    func toggleSubtitles() {
+        subtitlesEnabled.toggle()
+        if !subtitlesEnabled {
+            subtitleText = nil
+        }
+    }
+
+    /// Fetches and parses the WebVTT sidecar manually and drives a text overlay from it, instead
+    /// of handing it to AVFoundation as a composed media-selection track (see WebVTTParser).
+    private func loadSubtitlesIfNeeded() {
+        guard hasSubtitles, subtitleTask == nil, let url = stream.subtitles.first?.url else { return }
+        subtitleTask = Task { [weak self] in
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                guard !Task.isCancelled else { return }
+                self?.cues = WebVTTParser.parse(String(decoding: data, as: UTF8.self))
+            } catch {
+                self?.cues = []
+            }
+        }
+    }
+
+    private func addTimeObserverIfNeeded() {
+        guard timeObserver == nil, hasSubtitles else { return }
+        let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
+        timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+            let seconds = time.seconds
+            Task { @MainActor [weak self] in
+                self?.updateSubtitleText(at: seconds)
+            }
+        }
+    }
+
+    private func updateSubtitleText(at seconds: Double) {
+        guard subtitlesEnabled, seconds.isFinite else {
+            if subtitleText != nil { subtitleText = nil }
+            return
+        }
+        let active = cues.first { $0.start <= seconds && seconds <= $0.end }
+        if subtitleText != active?.text {
+            subtitleText = active?.text
+        }
     }
 
     private func observe(_ item: AVPlayerItem) {
@@ -182,23 +166,17 @@ final class PlayerSession {
     }
 
     private func retryWithFallbackOrFail() {
-        guard stream.allowsHeaderFallback, !isUsingFallback else {
+        guard stream.allowsHeaderFallback, !isUsingFallback,
+              let fallback = factory.fallbackItem(for: stream) else {
             failure = .playback
             isLoading = false
             return
         }
         isUsingFallback = true
         isLoading = true
-        itemTask = Task { [weak self] in
-            guard let self else { return }
-            guard let fallback = await factory.fallbackItem(for: stream) else {
-                failure = .playback
-                isLoading = false
-                return
-            }
-            guard !Task.isCancelled else { return }
-            attach(fallback)
-            player.play()
-        }
+        transport = fallback
+        observe(fallback.item)
+        player.replaceCurrentItem(with: fallback.item)
+        player.play()
     }
 }

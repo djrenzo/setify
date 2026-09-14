@@ -16,11 +16,30 @@ struct PlayerScreen: View {
             PlayerControllerView(player: session.player)
                 .ignoresSafeArea()
             statusOverlay
+            subtitleOverlay
             topBar
         }
         .statusBarHidden()
         .onAppear { session.start() }
         .onDisappear { session.stop() }
+    }
+
+    @ViewBuilder
+    private var subtitleOverlay: some View {
+        if session.subtitlesEnabled, let text = session.subtitleText {
+            VStack {
+                Spacer()
+                Text(text)
+                    .font(.system(size: 17, weight: .semibold))
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.black.opacity(0.65), in: .rect(cornerRadius: 6))
+                    .padding(.horizontal, 32)
+                    .padding(.bottom, 90)
+            }
+        }
     }
 
     @ViewBuilder
@@ -59,7 +78,17 @@ struct PlayerScreen: View {
                     .padding(.vertical, 8)
                     .background(.black.opacity(0.55), in: .capsule)
                 Spacer()
-                Color.clear.frame(width: 42, height: 42)
+                if session.hasSubtitles {
+                    Button(action: session.toggleSubtitles) {
+                        Image(systemName: session.subtitlesEnabled ? "captions.bubble.fill" : "captions.bubble")
+                            .font(.headline)
+                            .frame(width: 42, height: 42)
+                            .background(.black.opacity(0.55), in: .circle)
+                    }
+                    .accessibilityLabel(session.subtitlesEnabled ? "Desactivar subtítulos" : "Activar subtítulos")
+                } else {
+                    Color.clear.frame(width: 42, height: 42)
+                }
             }
             .foregroundStyle(.white)
             .padding()

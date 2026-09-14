@@ -18,16 +18,15 @@ struct MiniseriesCatalogView: View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(store.shows) { show in
-                    let favorite = FavoriteItem(miniserie: show)
-                    ZStack(alignment: .topTrailing) {
-                        NavigationLink(value: MiniserieRoute(show: show)) {
-                            MiniserieTile(show: show)
-                        }
-                        .buttonStyle(.plain)
-                        FavoriteHeartButton(isFavorite: model.favorites.isFavorite(favorite.id)) {
-                            Task { await model.favorites.toggle(favorite) }
+                    NavigationLink(value: MiniserieRoute(show: show)) {
+                        MiniserieTile(
+                            show: show,
+                            isFavorite: model.favorites.isFavorite(FavoriteItem(miniserie: show).id)
+                        ) {
+                            Task { await model.favorites.toggle(FavoriteItem(miniserie: show)) }
                         }
                     }
+                    .buttonStyle(.plain)
                     .task {
                         if show.id == store.shows.last?.id {
                             store.loadNextPage()
@@ -57,27 +56,16 @@ struct MiniseriesCatalogView: View {
 
 private struct MiniserieTile: View {
     let show: MiniserieShow
+    let isFavorite: Bool
+    let onToggleFavorite: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            artwork
+            SquarePosterImage(url: show.posterURL)
+                .overlay(alignment: .topTrailing) {
+                    FavoriteHeartButton(isFavorite: isFavorite, onToggle: onToggleFavorite)
+                }
             Text(show.title).font(.subheadline.bold()).foregroundStyle(.white).lineLimit(2)
         }
-    }
-
-    private var artwork: some View {
-        AsyncImage(url: show.posterURL) { phase in
-            switch phase {
-            case .success(let image): image.resizable().scaledToFill()
-            default:
-                ZStack {
-                    Color.cinemaSurfaceRaised
-                    Image(systemName: "film").foregroundStyle(.secondary)
-                }
-            }
-        }
-        .aspectRatio(1, contentMode: .fit)
-        .clipped()
-        .clipShape(.rect(cornerRadius: 14))
     }
 }

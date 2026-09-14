@@ -21,16 +21,12 @@ struct ShowGridView: View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(shows) { show in
-                    let favorite = FavoriteItem(show: show, kind: favoriteKind)
-                    ZStack(alignment: .topTrailing) {
-                        NavigationLink(value: ShowRoute(show: show)) {
-                            ShowTile(show: show)
-                        }
-                        .buttonStyle(.plain)
-                        FavoriteHeartButton(isFavorite: favorites.isFavorite(favorite.id)) {
-                            Task { await favorites.toggle(favorite) }
+                    NavigationLink(value: ShowRoute(show: show)) {
+                        ShowTile(show: show, isFavorite: favorites.isFavorite(favoriteID(for: show))) {
+                            Task { await favorites.toggle(FavoriteItem(show: show, kind: favoriteKind)) }
                         }
                     }
+                    .buttonStyle(.plain)
                     .task {
                         if show.id == shows.last?.id {
                             onReachEnd()
@@ -54,34 +50,27 @@ struct ShowGridView: View {
         }
         .background(Color.cinemaBackground.ignoresSafeArea())
     }
+
+    private func favoriteID(for show: ShowSummary) -> String {
+        FavoriteItem(show: show, kind: favoriteKind).id
+    }
 }
 
 private struct ShowTile: View {
     let show: ShowSummary
+    let isFavorite: Bool
+    let onToggleFavorite: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            artwork
+            SquarePosterImage(url: show.posterURL)
+                .overlay(alignment: .topTrailing) {
+                    FavoriteHeartButton(isFavorite: isFavorite, onToggle: onToggleFavorite)
+                }
             Text(show.title).font(.subheadline.bold()).foregroundStyle(.white).lineLimit(2)
             if let subtitle = show.subtitle {
                 Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
         }
-    }
-
-    private var artwork: some View {
-        AsyncImage(url: show.posterURL) { phase in
-            switch phase {
-            case .success(let image): image.resizable().scaledToFill()
-            default:
-                ZStack {
-                    Color.cinemaSurfaceRaised
-                    Image(systemName: "film").foregroundStyle(.secondary)
-                }
-            }
-        }
-        .aspectRatio(1, contentMode: .fit)
-        .clipped()
-        .clipShape(.rect(cornerRadius: 14))
     }
 }

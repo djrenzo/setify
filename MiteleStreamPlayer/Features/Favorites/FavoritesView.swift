@@ -75,7 +75,8 @@ private struct FavoriteRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 14) {
-                artwork
+                SquarePosterImage(url: favorite.posterURL)
+                    .frame(width: 84, height: 84)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(favorite.kind.category.title.uppercased())
                         .font(.caption2.bold())
@@ -100,20 +101,5 @@ private struct FavoriteRow: View {
             .cinemaCard()
         }
         .buttonStyle(.plain)
-    }
-
-    private var artwork: some View {
-        AsyncImage(url: favorite.posterURL) { phase in
-            switch phase {
-            case .success(let image): image.resizable().scaledToFill()
-            default:
-                ZStack {
-                    Color.cinemaSurfaceRaised
-                    Image(systemName: "film").foregroundStyle(.secondary)
-                }
-            }
-        }
-        .frame(width: 64, height: 64)
-        .clipShape(.rect(cornerRadius: 12))
     }
 }
