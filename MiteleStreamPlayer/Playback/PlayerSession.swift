@@ -165,6 +165,10 @@ final class PlayerSession {
         commandCenter.previousTrackCommand.isEnabled = false
         commandCenter.skipForwardCommand.isEnabled = false
         commandCenter.skipBackwardCommand.isEnabled = false
+        // Left disabled: AVPlayerViewController's own native transport bar already manages
+        // scrubbing for seekable (VOD) content, and registering a competing handler for the
+        // same command crashed VOD playback.
+        commandCenter.changePlaybackPositionCommand.isEnabled = false
 
         commandCenter.playCommand.isEnabled = true
         commandCenter.playCommand.addTarget { [weak self] _ in
@@ -184,15 +188,6 @@ final class PlayerSession {
             } else {
                 player.play()
             }
-            return .success
-        }
-        commandCenter.changePlaybackPositionCommand.isEnabled = !stream.isLive
-        commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
-            guard let self, !stream.isLive,
-                  let event = event as? MPChangePlaybackPositionCommandEvent else {
-                return .commandFailed
-            }
-            player.seek(to: CMTime(seconds: event.positionTime, preferredTimescale: 600))
             return .success
         }
     }
@@ -247,7 +242,6 @@ final class PlayerSession {
         commandCenter.playCommand.removeTarget(nil)
         commandCenter.pauseCommand.removeTarget(nil)
         commandCenter.togglePlayPauseCommand.removeTarget(nil)
-        commandCenter.changePlaybackPositionCommand.removeTarget(nil)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
