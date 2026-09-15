@@ -120,6 +120,8 @@ actor MediasetStreamResolver: StreamResolving {
             headers = APIConfiguration.rtvePlaybackHeaders
         case .mediaset:
             headers = APIConfiguration.mediasetPlaybackHeaders
+        case .atresplayer:
+            headers = AtresAPIConfiguration.playbackHeaders
         case .none:
             headers = [:]
         }
