@@ -40,8 +40,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
 extension AppDelegate: UNUserNotificationCenterDelegate {
     /// Without this, local notifications (download progress/completion) are silently suppressed
-    /// while the app is in the foreground.
-    func userNotificationCenter(
+    /// while the app is in the foreground. `nonisolated` because `UNUserNotificationCenterDelegate`
+    /// requirements aren't main-actor-isolated, even though `AppDelegate` itself is (as a
+    /// `UIApplicationDelegate`) — the body here doesn't touch any actor-isolated state anyway.
+    nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void

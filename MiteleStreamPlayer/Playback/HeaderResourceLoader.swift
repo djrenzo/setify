@@ -218,6 +218,7 @@ final class HeaderResourceLoader: NSObject, AVAssetResourceLoaderDelegate, URLSe
         }
     }
 
+    @discardableResult
     private func synchronized<T>(_ operation: () -> T) -> T {
         lock.lock()
         defer { lock.unlock() }
