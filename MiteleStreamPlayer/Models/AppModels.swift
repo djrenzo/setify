@@ -64,6 +64,9 @@ struct MediaCard: Hashable, Identifiable, Sendable {
 enum PlaybackRequest: Sendable {
     case channel(Channel)
     case video(MediaCard)
+    /// A previously downloaded item, already resolved to its local file — no network resolution
+    /// needed, unlike `.video`.
+    case downloaded(ResolvedStream)
 }
 
 struct SubtitleTrack: Hashable, Sendable {
@@ -80,6 +83,21 @@ struct ResolvedStream: Identifiable, Sendable {
     let subtitles: [SubtitleTrack]
     let artworkURL: URL?
     let isLive: Bool
+    /// The catalog item's stable id (`MediaCard.id`) — used to save/resume watch progress.
+    /// `nil` for live channels, which aren't resumable.
+    let contentID: String?
+}
+
+struct WatchProgress: Codable, Hashable, Sendable {
+    let contentID: String
+    var positionSeconds: Double
+    var durationSeconds: Double
+    var updatedAt: Date
+
+    var fraction: Double {
+        guard durationSeconds > 0 else { return 0 }
+        return min(max(positionSeconds / durationSeconds, 0), 1)
+    }
 }
 
 enum PreparationPhase: Sendable, Equatable {

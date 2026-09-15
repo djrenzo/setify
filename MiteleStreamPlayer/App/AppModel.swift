@@ -11,6 +11,8 @@ final class AppModel {
     let vault: CredentialVault
     let catalog: CatalogEnvironment
     let favorites: FavoritesStore
+    let watchProgress: WatchProgressStore
+    let downloads: DownloadStore
 
     init(
         channels: ChannelStore,
@@ -19,7 +21,9 @@ final class AppModel {
         credentialStatus: CredentialStatusStore,
         vault: CredentialVault,
         catalog: CatalogEnvironment,
-        favorites: FavoritesStore
+        favorites: FavoritesStore,
+        watchProgress: WatchProgressStore,
+        downloads: DownloadStore
     ) {
         self.channels = channels
         self.search = search
@@ -28,6 +32,8 @@ final class AppModel {
         self.vault = vault
         self.catalog = catalog
         self.favorites = favorites
+        self.watchProgress = watchProgress
+        self.downloads = downloads
     }
 
     static func live() -> AppModel {
@@ -49,7 +55,9 @@ final class AppModel {
             credentialStatus: CredentialStatusStore(vault: vault),
             vault: vault,
             catalog: CatalogEnvironment.live(client: client),
-            favorites: FavoritesStore(repository: JSONFavoritesRepository())
+            favorites: FavoritesStore(repository: JSONFavoritesRepository()),
+            watchProgress: WatchProgressStore(repository: JSONWatchProgressRepository()),
+            downloads: DownloadStore(repository: JSONDownloadsRepository(), resolver: resolver)
         )
     }
 }

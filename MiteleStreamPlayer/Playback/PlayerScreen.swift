@@ -9,8 +9,8 @@ struct PlayerScreen: View {
     @State private var showsOverlay = true
     @State private var hideTask: Task<Void, Never>?
 
-    init(stream: ResolvedStream) {
-        _session = State(initialValue: PlayerSession(stream: stream))
+    init(stream: ResolvedStream, progressStore: WatchProgressStore) {
+        _session = State(initialValue: PlayerSession(stream: stream, progressStore: progressStore))
     }
 
     var body: some View {

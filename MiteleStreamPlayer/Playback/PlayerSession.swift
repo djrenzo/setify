@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import MediaPlayer
 import Observation
+import UIKit
 
 struct PlayerTransport {
     let item: AVPlayerItem
@@ -47,17 +48,24 @@ final class PlayerSession {
 
     @ObservationIgnored private let stream: ResolvedStream
     @ObservationIgnored private let factory: any PlayerItemBuilding
+    @ObservationIgnored private let progressStore: WatchProgressStore
     @ObservationIgnored private var transport: PlayerTransport
     @ObservationIgnored private var statusObservation: NSKeyValueObservation?
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var subtitleTask: Task<Void, Never>?
+    @ObservationIgnored private var artworkTask: Task<Void, Never>?
     @ObservationIgnored private var cues: [SubtitleCue] = []
+    @ObservationIgnored private var nowPlayingArtwork: MPMediaItemArtwork?
+    @ObservationIgnored private var hasAttemptedResume = false
+    @ObservationIgnored private var lastProgressSaveDate: Date?
 
     init(
         stream: ResolvedStream,
+        progressStore: WatchProgressStore,
         factory: any PlayerItemBuilding = AVPlayerItemFactory()
     ) {
         self.stream = stream
+        self.progressStore = progressStore
         self.factory = factory
         title = stream.title
         let initial = factory.standardItem(for: stream)
@@ -83,8 +91,11 @@ final class PlayerSession {
     }
 
     func stop() {
+        saveProgressNow()
         subtitleTask?.cancel()
         subtitleTask = nil
+        artworkTask?.cancel()
+        artworkTask = nil
         if let timeObserver {
             player.removeTimeObserver(timeObserver)
             self.timeObserver = nil
@@ -130,6 +141,7 @@ final class PlayerSession {
             Task { @MainActor [weak self] in
                 self?.updateSubtitleText(at: seconds)
                 self?.updateNowPlayingPlaybackInfo()
+                self?.saveProgressIfDue(at: seconds)
             }
         }
     }
@@ -147,12 +159,29 @@ final class PlayerSession {
 
     /// Drives Control Center / Lock Screen "Now Playing" — AVKit's own automatic mode
     /// (`updatesNowPlayingInfoCenter`) relies on metadata embedded in the asset itself, which
-    /// these raw HLS streams don't carry, so title/status are set manually instead.
-    /// Artwork is intentionally not set here — loading it (network fetch + UIImage decode +
-    /// MPMediaItemArtwork) reliably crashed VOD playback; needs a safer approach before retrying.
+    /// these raw HLS streams don't carry, so title/status/artwork are set manually instead.
     private func configureNowPlaying() {
         setUpRemoteCommands()
         updateNowPlayingInfo()
+    }
+
+    /// Fetching + decoding the artwork previously ran inline on the (MainActor-inherited) `Task`
+    /// created from `start()`, immediately as the fullscreen presentation was still transitioning
+    /// in — and reliably crashed VOD playback. This version keeps the network fetch and `UIImage`
+    /// decode fully off the main actor via `Task.detached`, only hops back to update state once
+    /// the image is ready, and only starts once the item has actually reported `.readyToPlay`
+    /// (see `handle(_:)`) so it never runs during the initial transition.
+    private func loadArtworkIfNeeded() {
+        guard artworkTask == nil, let url = stream.artworkURL else { return }
+        artworkTask = Task.detached(priority: .utility) { [weak self] in
+            guard let (data, _) = try? await URLSession.shared.data(from: url),
+                  let image = UIImage(data: data) else { return }
+            let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            await MainActor.run {
+                self?.nowPlayingArtwork = artwork
+                self?.updateNowPlayingInfo()
+            }
+        }
     }
 
     private func setUpRemoteCommands() {
@@ -200,6 +229,9 @@ final class PlayerSession {
                 info[MPMediaItemPropertyPlaybackDuration] = duration
             }
         }
+        if let nowPlayingArtwork {
+            info[MPMediaItemPropertyArtwork] = nowPlayingArtwork
+        }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
@@ -238,6 +270,8 @@ final class PlayerSession {
         case .readyToPlay:
             isLoading = false
             failure = nil
+            loadArtworkIfNeeded()
+            resumeIfNeeded()
         case .failed:
             retryWithFallbackOrFail()
         case .unknown:
@@ -245,6 +279,42 @@ final class PlayerSession {
         @unknown default:
             retryWithFallbackOrFail()
         }
+    }
+
+    /// Seeks to a previously saved position the first time the item becomes ready. Guarded to
+    /// run once per session — if a header-fallback retry re-fires `.readyToPlay` on a new item,
+    /// we're already past the resume point and re-seeking to the original saved position would
+    /// rewind unexpectedly.
+    private func resumeIfNeeded() {
+        guard !hasAttemptedResume else { return }
+        hasAttemptedResume = true
+        guard !stream.isLive, let contentID = stream.contentID,
+              let saved = progressStore.progress(for: contentID) else { return }
+        let time = CMTime(seconds: saved.positionSeconds, preferredTimescale: 600)
+        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
+    /// Persists progress at most every few seconds during playback, so a saved position exists
+    /// even if the app is killed rather than closed normally through `stop()`.
+    private func saveProgressIfDue(at seconds: Double) {
+        guard !stream.isLive, stream.contentID != nil, seconds.isFinite else { return }
+        let now = Date.now
+        if let last = lastProgressSaveDate, now.timeIntervalSince(last) < 5 { return }
+        lastProgressSaveDate = now
+        persistProgress(position: seconds)
+    }
+
+    private func saveProgressNow() {
+        guard !stream.isLive, stream.contentID != nil else { return }
+        let seconds = player.currentTime().seconds
+        guard seconds.isFinite else { return }
+        persistProgress(position: seconds)
+    }
+
+    private func persistProgress(position: Double) {
+        guard let contentID = stream.contentID,
+              let duration = player.currentItem?.duration.seconds, duration.isFinite else { return }
+        Task { await progressStore.update(contentID: contentID, position: position, duration: duration) }
     }
 
     private func retryWithFallbackOrFail() {

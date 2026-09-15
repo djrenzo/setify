@@ -17,7 +17,12 @@ struct EpisodesListView: View {
         ScrollView {
             LazyVStack(spacing: 10) {
                 ForEach(store.episodes) { episode in
-                    EpisodeRow(card: episode) {
+                    EpisodeRow(
+                        card: episode,
+                        watchedFraction: model.watchProgress.fraction(for: episode.id),
+                        downloadState: model.downloads.state(for: episode.id),
+                        onDownloadTap: { handleDownloadTap(episode) }
+                    ) {
                         model.playback.prepare(.video(episode))
                     }
                     .task {
@@ -40,11 +45,27 @@ struct EpisodesListView: View {
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .task { store.loadInitial() }
+        .task { await model.watchProgress.loadIfNeeded() }
+        .task { await model.downloads.loadIfNeeded() }
+    }
+
+    private func handleDownloadTap(_ episode: MediaCard) {
+        switch model.downloads.state(for: episode.id) {
+        case .notDownloaded, .failed:
+            model.downloads.startDownload(card: episode)
+        case .downloading:
+            model.downloads.cancelDownload(contentID: episode.id)
+        case .downloaded:
+            Task { await model.downloads.delete(contentID: episode.id) }
+        }
     }
 }
 
 struct EpisodeRow: View {
     let card: MediaCard
+    let watchedFraction: Double
+    let downloadState: DownloadState
+    let onDownloadTap: () -> Void
     let onPlay: () -> Void
 
     var body: some View {
@@ -61,6 +82,7 @@ struct EpisodeRow: View {
                     }
                 }
                 Spacer(minLength: 0)
+                DownloadButton(state: downloadState, onTap: onDownloadTap)
                 Image(systemName: "play.circle.fill").font(.title2).foregroundStyle(Color.cinemaAccent)
             }
             .padding(12)
@@ -83,6 +105,9 @@ struct EpisodeRow: View {
             }
         }
         .frame(width: 116, height: 72)
+        .overlay(alignment: .bottom) {
+            WatchProgressBar(fraction: watchedFraction)
+        }
         .clipShape(.rect(cornerRadius: 12))
     }
 }

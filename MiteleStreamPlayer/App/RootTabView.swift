@@ -9,12 +9,14 @@ struct RootTabView: View {
         TabView {
             HomeView(model: model)
                 .tabItem { Label("Inicio", systemImage: "house.fill") }
+            DownloadsView(model: model)
+                .tabItem { Label("Descargas", systemImage: "arrow.down.circle.fill") }
             FavoritesView(model: model)
                 .tabItem { Label("Favoritos", systemImage: "heart.fill") }
         }
         .tint(Color.cinemaAccent)
         .fullScreenCover(item: $playback.stream, onDismiss: model.playback.playerDismissed) {
-            PlayerScreen(stream: $0)
+            PlayerScreen(stream: $0, progressStore: model.watchProgress)
         }
         .alert(item: $playback.presentedFailure, content: failureAlert)
         .overlay { preparationOverlay }

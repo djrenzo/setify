@@ -38,6 +38,9 @@ actor MediasetStreamResolver: StreamResolving {
             case .video(let card):
                 await progress(.resolvingMetadata)
                 return try await resolveVideo(card, progress: progress)
+            case .downloaded(let stream):
+                await progress(.loadingPlayer)
+                return stream
             }
         } catch is CancellationError {
             throw CancellationError()
@@ -70,7 +73,8 @@ actor MediasetStreamResolver: StreamResolving {
             allowsHeaderFallback: !headers.isEmpty,
             subtitles: [],
             artworkURL: nil,
-            isLive: true
+            isLive: true,
+            contentID: nil
         )
     }
 
@@ -104,7 +108,8 @@ actor MediasetStreamResolver: StreamResolving {
             allowsHeaderFallback: true,
             subtitles: subtitleTracks(from: delivery.0),
             artworkURL: nil,
-            isLive: true
+            isLive: true,
+            contentID: nil
         )
     }
 
@@ -157,7 +162,8 @@ actor MediasetStreamResolver: StreamResolving {
             allowsHeaderFallback: true,
             subtitles: subtitleTracks(from: delivery.0),
             artworkURL: card.artworkURL,
-            isLive: false
+            isLive: false,
+            contentID: card.id
         )
     }
 
