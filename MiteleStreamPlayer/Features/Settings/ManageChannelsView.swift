@@ -120,6 +120,10 @@ private struct AddChannelView: View {
                 TextField("Slug, por ejemplo telecinco", text: $slug)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+            } else if source == .atresplayer {
+                TextField("Id de canal de Atresplayer", text: $slug)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
             } else {
                 TextField("URL HLS", text: $urlText, axis: .vertical)
                     .textInputAutocapitalization(.never)
@@ -147,7 +151,7 @@ private struct AddChannelView: View {
     private var isValid: Bool {
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !shortName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        if source == .mediaset {
+        if source == .mediaset || source == .atresplayer {
             return !slug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         return URL(string: urlText)?.scheme == "https"
@@ -155,14 +159,15 @@ private struct AddChannelView: View {
 
     private func save() async {
         isSaving = true
+        let usesSlug = source == .mediaset || source == .atresplayer
         let channel = Channel(
             id: UUID(),
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
             shortName: String(shortName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4)),
             source: source,
-            slug: source == .mediaset ? slug.trimmingCharacters(in: .whitespacesAndNewlines) : nil,
+            slug: usesSlug ? slug.trimmingCharacters(in: .whitespacesAndNewlines) : nil,
             directURL: source == .direct ? URL(string: urlText) : nil,
-            headerProfile: source == .mediaset ? .mediaset : headerProfile,
+            headerProfile: source == .mediaset ? .mediaset : (source == .atresplayer ? .atresplayer : headerProfile),
             isEnabled: true,
             tintHex: "FF4D5F"
         )

@@ -9,6 +9,7 @@ final class AppModel {
     let playback: PlaybackCoordinator
     let credentialStatus: CredentialStatusStore
     let vault: CredentialVault
+    let atresVault: AtresCredentialVault
     let catalog: CatalogEnvironment
     let favorites: FavoritesStore
     let watchProgress: WatchProgressStore
@@ -20,6 +21,7 @@ final class AppModel {
         playback: PlaybackCoordinator,
         credentialStatus: CredentialStatusStore,
         vault: CredentialVault,
+        atresVault: AtresCredentialVault,
         catalog: CatalogEnvironment,
         favorites: FavoritesStore,
         watchProgress: WatchProgressStore,
@@ -30,6 +32,7 @@ final class AppModel {
         self.playback = playback
         self.credentialStatus = credentialStatus
         self.vault = vault
+        self.atresVault = atresVault
         self.catalog = catalog
         self.favorites = favorites
         self.watchProgress = watchProgress
@@ -38,12 +41,14 @@ final class AppModel {
 
     static func live() -> AppModel {
         let vault = CredentialVault()
+        let atresVault = AtresCredentialVault()
         let client = HTTPClient()
         let identity = GigyaIdentityService(client: client, credentialProvider: vault)
         let resolver = MediasetStreamResolver(
             client: client,
             credentials: vault,
-            identityService: identity
+            identityService: identity,
+            atresPlayer: AtresPlayerService(client: client, sessionProvider: atresVault)
         )
         let channelStore = ChannelStore(repository: JSONChannelRepository())
         let searchStore = SearchStore(service: MiteleSearchService(client: client))
@@ -54,6 +59,7 @@ final class AppModel {
             playback: playback,
             credentialStatus: CredentialStatusStore(vault: vault),
             vault: vault,
+            atresVault: atresVault,
             catalog: CatalogEnvironment.live(client: client),
             favorites: FavoritesStore(repository: JSONFavoritesRepository()),
             watchProgress: WatchProgressStore(repository: JSONWatchProgressRepository()),

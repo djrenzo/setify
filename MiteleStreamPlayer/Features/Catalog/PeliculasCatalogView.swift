@@ -3,55 +3,90 @@ import SwiftUI
 @MainActor
 struct PeliculasCatalogView: View {
     @State var store: PeliculasCatalogStore
+    @State var atresStore: AtresRecordingCatalogStore
     let model: AppModel
+
+    @State private var source = PlatformSource.mitele
+
+    var body: some View {
+        VStack(spacing: 0) {
+            PlatformSourcePicker(selection: $source)
+            switch source {
+            case .mitele:
+                grid(
+                    items: store.items,
+                    isLoading: store.isLoading,
+                    errorMessage: store.errorMessage,
+                    favoriteKind: .pelicula,
+                    onReachEnd: store.loadNextPage
+                )
+                .task { store.loadInitial() }
+            case .atresplayer:
+                grid(
+                    items: atresStore.items,
+                    isLoading: atresStore.isLoading,
+                    errorMessage: atresStore.errorMessage,
+                    favoriteKind: .atresPelicula,
+                    onReachEnd: atresStore.loadNextPage
+                )
+                .task { atresStore.loadInitial() }
+            }
+        }
+        .background(Color.cinemaBackground.ignoresSafeArea())
+        .navigationTitle("Películas")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await model.watchProgress.loadIfNeeded() }
+        .task { await model.downloads.loadIfNeeded() }
+    }
 
     private let columns = [
         GridItem(.flexible(), spacing: 12),
         GridItem(.flexible(), spacing: 12)
     ]
 
-    var body: some View {
+    private func grid(
+        items: [FlatCatalogItem],
+        isLoading: Bool,
+        errorMessage: String?,
+        favoriteKind: FavoriteKind,
+        onReachEnd: @escaping () -> Void
+    ) -> some View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 12) {
-                ForEach(store.items) { item in
+                ForEach(items) { item in
                     Button {
                         model.playback.prepare(.video(mediaCard(for: item)))
                     } label: {
                         PeliculaTile(
                             item: item,
-                            isFavorite: model.favorites.isFavorite(FavoriteItem(pelicula: item).id),
+                            isFavorite: model.favorites.isFavorite(FavoriteItem(pelicula: item, kind: favoriteKind).id),
                             watchedFraction: model.watchProgress.fraction(for: item.id),
                             downloadState: model.downloads.state(for: item.id),
                             onDownloadTap: { handleDownloadTap(item) }
                         ) {
-                            Task { await model.favorites.toggle(FavoriteItem(pelicula: item)) }
+                            Task { await model.favorites.toggle(FavoriteItem(pelicula: item, kind: favoriteKind)) }
                         }
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Reproducir \(item.title)")
                     .task {
-                        if item.id == store.items.last?.id {
-                            store.loadNextPage()
+                        if item.id == items.last?.id {
+                            onReachEnd()
                         }
                     }
                 }
             }
             .padding(.horizontal, 18)
             .padding(.top, 12)
-            if store.isLoading {
+            if isLoading {
                 ProgressView().padding()
             }
-            if let message = store.errorMessage, store.items.isEmpty {
-                ContentUnavailableView("No se pudo cargar", systemImage: "wifi.exclamationmark", description: Text(message))
+            if let errorMessage, items.isEmpty {
+                ContentUnavailableView("No se pudo cargar", systemImage: "wifi.exclamationmark", description: Text(errorMessage))
                     .padding(.top, 60)
             }
         }
         .background(Color.cinemaBackground.ignoresSafeArea())
-        .navigationTitle("Películas")
-        .navigationBarTitleDisplayMode(.inline)
-        .task { store.loadInitial() }
-        .task { await model.watchProgress.loadIfNeeded() }
-        .task { await model.downloads.loadIfNeeded() }
     }
 
     private func mediaCard(for item: FlatCatalogItem) -> MediaCard {

@@ -38,5 +38,175 @@
     "headerProfile": "rtve",
     "isEnabled": true,
     "tintHex": "22A989"
+  },
+  {
+    "id": "491D146A-9CF3-4969-85FB-C1EDDA2B4A42",
+    "name": "Antena 3",
+    "shortName": "A3",
+    "source": "atresplayer",
+    "slug": "5a6a165a7ed1a834493ebf6a",
+    "headerProfile": "atresplayer",
+    "isEnabled": true,
+    "tintHex": "FF7A00"
+  },
+  {
+    "id": "88F4E31C-BE6F-40BD-AB05-B73F4CD39D0D",
+    "name": "La Sexta",
+    "shortName": "La6",
+    "source": "atresplayer",
+    "slug": "5a6a172c7ed1a834493ebf6b",
+    "headerProfile": "atresplayer",
+    "isEnabled": true,
+    "tintHex": "8A2BE2"
+  },
+  {
+    "id": "A0A304A2-B5E7-4B38-ACD3-F214A98E0B5C",
+    "name": "Neox",
+    "shortName": "Neox",
+    "source": "atresplayer",
+    "slug": "5a6a17da7ed1a834493ebf6d",
+    "headerProfile": "atresplayer",
+    "isEnabled": true,
+    "tintHex": "39B54A"
+  },
+  {
+    "id": "624E9B31-5459-4F57-9C78-FE734F1EE148",
+    "name": "Nova",
+    "shortName": "Nova",
+    "source": "atresplayer",
+    "slug": "5a6a180b7ed1a834493ebf6e",
+    "headerProfile": "atresplayer",
+    "isEnabled": true,
+    "tintHex": "FF3D7F"
+  },
+  {
+    "id": "88CCECA5-0A79-4897-BD39-30BD88DD1DFF",
+    "name": "Mega",
+    "shortName": "Mega",
+    "source": "atresplayer",
+    "slug": "5a6a18357ed1a834493ebf6f",
+    "headerProfile": "atresplayer",
+    "isEnabled": true,
+    "tintHex": "1E90FF"
+  },
+  {
+    "id": "B69F0DFF-299A-44C7-BB98-9228F717FE9D",
+    "name": "Atreseries",
+    "shortName": "ATS",
+    "source": "atresplayer",
+    "slug": "5a6a189a7ed1a834493ebf70",
+    "headerProfile": "atresplayer",
+    "isEnabled": true,
+    "tintHex": "00B8A9"
+  },
+  {
+    "id": "779424CE-769D-4063-B5DD-4533B9C72A41",
+    "name": "Flooxer",
+    "shortName": "Flx",
+    "source": "atresplayer",
+    "slug": "5c1285e47ed1a861f8125285",
+    "headerProfile": "atresplayer",
+    "isEnabled": false,
+    "tintHex": "FFD400"
+  },
+  {
+    "id": "652F30A4-AB72-4826-8FDD-4965C41364CD",
+    "name": "Clásicos",
+    "shortName": "Clás",
+    "source": "atresplayer",
+    "slug": "648ef12c2bfab0e4507e0d61",
+    "headerProfile": "atresplayer",
+    "isEnabled": false,
+    "tintHex": "A0522D"
+  },
+  {
+    "id": "97A1898B-11CC-49C9-BC96-94D66001643C",
+    "name": "Kidz",
+    "shortName": "Kidz",
+    "source": "atresplayer",
+    "slug": "648c271d2bfab0e4177a0d61",
+    "headerProfile": "atresplayer",
+    "isEnabled": false,
+    "tintHex": "FF69B4"
+  },
+  {
+    "id": "E04E8667-8530-4DA7-BB1B-B4D15202E0FF",
+    "name": "Aquí no hay quien viva",
+    "shortName": "ANHQV",
+    "source": "atresplayer",
+    "slug": "648ef3951756b0e425af83cc",
+    "headerProfile": "atresplayer",
+    "isEnabled": false,
+    "tintHex": "D2691E"
+  },
+  {
+    "id": "E2A09482-F221-4C05-A1BB-113E897B58D2",
+    "name": "El Hormiguero",
+    "shortName": "EH",
+    "source": "atresplayer",
+    "slug": "648ef5882bfab0e4627e0d61",
+    "headerProfile": "atresplayer",
+    "isEnabled": false,
+    "tintHex": "32CD32"
+  },
+  {
+    "id": "7855DDA6-5EE9-40A6-B0D6-38A874602985",
+    "name": "Equipo de Investigación",
+    "shortName": "EDI",
+    "source": "atresplayer",
+    "slug": "648ef5551756b0e429af83cc",
+    "headerProfile": "atresplayer",
+    "isEnabled": false,
+    "tintHex": "4682B4"
+  },
+  {
+    "id": "1805FA40-6822-4BA2-B88F-691DB1496D92",
+    "name": "Física o Química",
+    "shortName": "FoQ",
+    "source": "atresplayer",
+    "slug": "648ef50a2bfab0e4607e0d61",
+    "headerProfile": "atresplayer",
+    "isEnabled": false,
+    "tintHex": "9932CC"
+  },
+  {
+    "id": "1050368B-D2A0-45F0-8EF6-D979C6646540",
+    "name": "El Club de la Comedia",
+    "shortName": "ECC",
+    "source": "atresplayer",
+    "slug": "648f47f7a2ffb0e40aeff3ad",
+    "headerProfile": "atresplayer",
+    "isEnabled": false,
+    "tintHex": "FF8C00"
+  },
+  {
+    "id": "44F75F3D-8E9C-4C19-BFF6-163A8C5C6197",
+    "name": "Multicine",
+    "shortName": "MCine",
+    "source": "atresplayer",
+    "slug": "648ef18c1756b0e41daf83cc",
+    "headerProfile": "atresplayer",
+    "isEnabled": false,
+    "tintHex": "B22222"
+  },
+  {
+    "id": "C5661CAB-DE01-461A-876B-DD5CA8AF08B0",
+    "name": "Comedia",
+    "shortName": "Com",
+    "source": "atresplayer",
+    "slug": "648ef23d2bfab0e4557e0d61",
+    "headerProfile": "atresplayer",
+    "isEnabled": false,
+    "tintHex": "20B2AA"
+  },
+  {
+    "id": "2F5EEC37-5C96-4FB6-A2AF-753323C880B9",
+    "name": "Mentes Inquietas",
+    "shortName": "MI",
+    "source": "atresplayer",
+    "slug": "648ef3162bfab0e4587e0d61",
+    "headerProfile": "atresplayer",
+    "isEnabled": false,
+    "tintHex": "6A5ACD"
   }
 ]

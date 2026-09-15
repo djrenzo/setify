@@ -3,11 +3,13 @@ import Foundation
 struct Channel: Codable, Hashable, Identifiable, Sendable {
     enum Source: String, Codable, CaseIterable, Sendable {
         case mediaset
+        case atresplayer
         case direct
 
         var title: String {
             switch self {
             case .mediaset: "Mediaset"
+            case .atresplayer: "Atresplayer"
             case .direct: "HLS directo"
             }
         }
@@ -15,12 +17,14 @@ struct Channel: Codable, Hashable, Identifiable, Sendable {
 
     enum HeaderProfile: String, Codable, CaseIterable, Sendable {
         case mediaset
+        case atresplayer
         case rtve
         case none
 
         var title: String {
             switch self {
             case .mediaset: "Mediaset"
+            case .atresplayer: "Atresplayer"
             case .rtve: "RTVE"
             case .none: "Sin cabeceras"
             }
@@ -125,6 +129,7 @@ enum PreparationPhase: Sendable, Equatable {
 enum PlaybackFailure: Error, Sendable {
     case missingCredentials
     case sessionExpired
+    case requiresAccount
     case apiChanged
     case unavailableClearStream
     case invalidChannel
@@ -136,6 +141,7 @@ enum PlaybackFailure: Error, Sendable {
         switch self {
         case .missingCredentials: "Falta la sesión"
         case .sessionExpired: "La sesión ha caducado"
+        case .requiresAccount: "Requiere cuenta"
         case .apiChanged: "El servicio ha cambiado"
         case .unavailableClearStream: "Contenido no compatible"
         case .invalidChannel: "Canal no válido"
@@ -151,6 +157,8 @@ enum PlaybackFailure: Error, Sendable {
             "Abre Sesión del prototipo y pega tus valores GMID y COOKIE."
         case .sessionExpired:
             "Actualiza los valores GMID y COOKIE desde Sesión del prototipo."
+        case .requiresAccount:
+            "Este contenido requiere una cuenta de Atresplayer. El inicio de sesión aún no está disponible en esta app."
         case .apiChanged:
             "La respuesta ya no tiene el formato esperado. Este acceso privado puede cambiar sin aviso."
         case .unavailableClearStream:

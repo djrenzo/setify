@@ -4,6 +4,19 @@ struct ShowRoute: Hashable {
     let show: ShowSummary
 }
 
+/// `ShowRoute` is shared by both Mitele and Atresplayer show grids — an Atres-sourced
+/// `ShowSummary.id` is namespaced with an `"atres:"` prefix (see `AtresModels.swift`), which is
+/// enough to route to the right detail pipeline without a second route type.
+@ViewBuilder
+@MainActor
+func showDetailDestination(for show: ShowSummary, model: AppModel) -> some View {
+    if show.id.isAtresID {
+        AtresShowDetailView(show: show, model: model)
+    } else {
+        ShowDetailView(show: show, model: model)
+    }
+}
+
 struct ShowGridView: View {
     let shows: [ShowSummary]
     let isLoading: Bool

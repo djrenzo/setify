@@ -17,11 +17,19 @@ struct CategoryRootView: View {
                 title: category.title,
                 favoriteKind: .programa,
                 store: ShowCatalogStore(service: model.catalog.showCatalog, refID: CatalogRefID.programas),
+                atresStore: AtresShowCatalogStore(
+                    service: model.catalog.atresRow,
+                    baseURL: AtresCatalogURLBuilder.formatSearch(categoryID: AtresCatalogID.categoryProgramas)
+                ),
                 model: model
             )
         case .series:
             SeriesCatalogView(
                 store: SeriesCatalogStore(service: model.catalog.editorialIndex),
+                atresStore: AtresShowCatalogStore(
+                    service: model.catalog.atresRow,
+                    baseURL: AtresCatalogURLBuilder.formatSearch(categoryID: AtresCatalogID.categorySeries)
+                ),
                 model: model
             )
         case .miniseries:
@@ -32,6 +40,10 @@ struct CategoryRootView: View {
         case .peliculas:
             PeliculasCatalogView(
                 store: PeliculasCatalogStore(service: model.catalog.editorialIndex),
+                atresStore: AtresRecordingCatalogStore(
+                    service: model.catalog.atresRow,
+                    baseURL: AtresCatalogURLBuilder.recordingSearch(categoryID: AtresCatalogID.categoryCine)
+                ),
                 model: model
             )
         }

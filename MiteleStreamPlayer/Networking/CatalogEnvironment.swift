@@ -6,6 +6,8 @@ struct CatalogEnvironment: Sendable {
     let seriesPage: any SeriesPageFetching
     let editorialIndex: any EditorialIndexFetching
     let miniserieTabs: any MiniserieTabsFetching
+    let atresRow: any AtresRowFetching
+    let atresFormatPage: any AtresFormatPageFetching
 
     static func live(client: HTTPClient) -> CatalogEnvironment {
         let graphQL = GraphQLCatalogService(client: client)
@@ -14,7 +16,9 @@ struct CatalogEnvironment: Sendable {
             episodeCatalog: graphQL,
             seriesPage: SeriesPageService(client: client),
             editorialIndex: BitbanEditorialIndexService(client: client),
-            miniserieTabs: MiniserieTabsService(client: client)
+            miniserieTabs: MiniserieTabsService(client: client),
+            atresRow: AtresRowService(client: client),
+            atresFormatPage: AtresFormatPageService(client: client)
         )
     }
 }

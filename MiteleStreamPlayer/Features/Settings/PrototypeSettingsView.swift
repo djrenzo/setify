@@ -5,20 +5,24 @@ struct PrototypeSettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     let vault: CredentialVault
+    let atresVault: AtresCredentialVault
     let onSaved: @MainActor () async -> Void
 
     @State private var gmid = ""
     @State private var cookie = ""
+    @State private var atresSession = ""
     @State private var revealsValues = false
     @State private var isSaving = false
-    @State private var showsClearConfirmation = false
+    @State private var showsClearMediasetConfirmation = false
+    @State private var showsClearAtresConfirmation = false
     @State private var errorMessage: String?
 
     var body: some View {
         NavigationStack {
             Form {
                 explanationSection
-                valuesSection
+                mediasetSection
+                atresSection
                 if let errorMessage {
                     Section { Text(errorMessage).foregroundStyle(Color.cinemaAccent) }
                 }
@@ -26,16 +30,24 @@ struct PrototypeSettingsView: View {
             }
             .scrollContentBackground(.hidden)
             .background(Color.cinemaBackground)
-            .navigationTitle("Sesión del prototipo")
+            .navigationTitle("Sesiones de streaming")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
             .task { await load() }
             .confirmationDialog(
-                "¿Borrar la sesión guardada?",
-                isPresented: $showsClearConfirmation,
+                "¿Borrar la sesión de Mitele/Mediaset guardada?",
+                isPresented: $showsClearMediasetConfirmation,
                 titleVisibility: .visible
             ) {
-                Button("Borrar sesión", role: .destructive) { Task { await clear() } }
+                Button("Borrar sesión", role: .destructive) { Task { await clearMediaset() } }
+                Button("Cancelar", role: .cancel) {}
+            }
+            .confirmationDialog(
+                "¿Borrar la sesión de Atresplayer guardada?",
+                isPresented: $showsClearAtresConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Borrar sesión", role: .destructive) { Task { await clearAtres() } }
                 Button("Cancelar", role: .cancel) {}
             }
         }
@@ -45,7 +57,7 @@ struct PrototypeSettingsView: View {
     private var explanationSection: some View {
         Section {
             Label("Solo se guardan en el llavero de este iPhone.", systemImage: "lock.shield.fill")
-            Text("Pega los valores GMID y COOKIE de una sesión propia. No se incluyen credenciales en el código ni se escriben en el registro.")
+            Text("Pega los valores de una sesión propia. No se incluyen credenciales en el código ni se escriben en el registro.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         } header: {
@@ -53,20 +65,34 @@ struct PrototypeSettingsView: View {
         }
     }
 
-    private var valuesSection: some View {
-        Section("Valores de sesión") {
+    private var mediasetSection: some View {
+        Section("Mitele / Mediaset") {
             CredentialField(title: "GMID", text: $gmid, isRevealed: revealsValues)
             CredentialField(title: "COOKIE", text: $cookie, isRevealed: revealsValues)
+        }
+    }
+
+    private var atresSection: some View {
+        Section {
+            CredentialField(title: "A3PSID", text: $atresSession, isRevealed: revealsValues)
             Toggle("Mostrar valores", isOn: $revealsValues)
+        } header: {
+            Text("Atresplayer")
+        } footer: {
+            Text("Solo hace falta para algunos programas y series que piden cuenta registrada. El directo y la mayoría del catálogo funcionan sin ella.")
         }
     }
 
     private var clearSection: some View {
         Section {
-            Button("Borrar sesión guardada", role: .destructive) {
-                showsClearConfirmation = true
+            Button("Borrar sesión de Mitele/Mediaset", role: .destructive) {
+                showsClearMediasetConfirmation = true
             }
             .disabled(gmid.isEmpty && cookie.isEmpty)
+            Button("Borrar sesión de Atresplayer", role: .destructive) {
+                showsClearAtresConfirmation = true
+            }
+            .disabled(atresSession.isEmpty)
         } footer: {
             Text("Los valores capturados caducan y pueden dejar de funcionar sin aviso.")
         }
@@ -84,7 +110,11 @@ struct PrototypeSettingsView: View {
     }
 
     private var canSave: Bool {
-        PrototypeCredentials(gmid: gmid, cookie: cookie).isValid
+        PrototypeCredentials(gmid: gmid, cookie: cookie).isValid || !trimmedAtresSession.isEmpty
+    }
+
+    private var trimmedAtresSession: String {
+        atresSession.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func load() async {
@@ -95,13 +125,26 @@ struct PrototypeSettingsView: View {
         } catch {
             errorMessage = "No se pudo leer el llavero de este dispositivo."
         }
+        do {
+            atresSession = try await atresVault.session() ?? ""
+        } catch {
+            errorMessage = "No se pudo leer el llavero de este dispositivo."
+        }
     }
 
     private func save() async {
         isSaving = true
         defer { isSaving = false }
         do {
-            try await vault.save(PrototypeCredentials(gmid: gmid, cookie: cookie))
+            let mediasetCredentials = PrototypeCredentials(gmid: gmid, cookie: cookie)
+            if mediasetCredentials.isValid {
+                try await vault.save(mediasetCredentials)
+            }
+            if trimmedAtresSession.isEmpty {
+                try await atresVault.clear()
+            } else {
+                try await atresVault.save(trimmedAtresSession)
+            }
             await onSaved()
             dismiss()
         } catch {
@@ -109,13 +152,22 @@ struct PrototypeSettingsView: View {
         }
     }
 
-    private func clear() async {
+    private func clearMediaset() async {
         do {
             try await vault.clear()
             gmid = ""
             cookie = ""
             await onSaved()
-            dismiss()
+        } catch {
+            errorMessage = "No se pudo borrar la sesión guardada."
+        }
+    }
+
+    private func clearAtres() async {
+        do {
+            try await atresVault.clear()
+            atresSession = ""
+            await onSaved()
         } catch {
             errorMessage = "No se pudo borrar la sesión guardada."
         }
@@ -142,4 +194,3 @@ private struct CredentialField: View {
         .privacySensitive()
     }
 }
-

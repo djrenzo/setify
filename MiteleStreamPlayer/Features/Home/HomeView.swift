@@ -82,7 +82,7 @@ struct HomeView: View {
             Button { sheet = .credentials } label: {
                 Image(systemName: model.credentialStatus.hasCredentials ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.exclamationmark")
             }
-            .accessibilityLabel("Sesión del prototipo")
+            .accessibilityLabel("Sesiones de streaming")
         }
     }
 
@@ -90,7 +90,7 @@ struct HomeView: View {
     private func sheetContent(_ destination: HomeSheet) -> some View {
         switch destination {
         case .credentials:
-            PrototypeSettingsView(vault: model.vault) {
+            PrototypeSettingsView(vault: model.vault, atresVault: model.atresVault) {
                 await model.credentialStatus.refresh()
                 await model.playback.invalidateIdentity()
             }

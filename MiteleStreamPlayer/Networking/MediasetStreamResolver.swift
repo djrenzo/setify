@@ -11,15 +11,18 @@ actor MediasetStreamResolver: StreamResolving {
     private let client: HTTPClient
     private let credentials: any CredentialProviding
     private let identityService: GigyaIdentityService
+    private let atresPlayer: any AtresPlayerFetching
 
     init(
         client: HTTPClient,
         credentials: any CredentialProviding,
-        identityService: GigyaIdentityService
+        identityService: GigyaIdentityService,
+        atresPlayer: any AtresPlayerFetching
     ) {
         self.client = client
         self.credentials = credentials
         self.identityService = identityService
+        self.atresPlayer = atresPlayer
     }
 
     func resolve(
@@ -33,10 +36,17 @@ actor MediasetStreamResolver: StreamResolving {
                     await progress(.loadingPlayer)
                     return try resolveDirect(channel)
                 }
+                if channel.source == .atresplayer {
+                    await progress(.resolvingMetadata)
+                    return try await resolveAtresLive(channel, progress: progress)
+                }
                 await progress(.resolvingMetadata)
                 return try await resolveLive(channel, progress: progress)
             case .video(let card):
                 await progress(.resolvingMetadata)
+                if let ref = AtresContentRef(pageURL: card.pageURL) {
+                    return try await resolveAtresVideo(card, ref: ref, progress: progress)
+                }
                 return try await resolveVideo(card, progress: progress)
             case .downloaded(let stream):
                 await progress(.loadingPlayer)
@@ -51,6 +61,53 @@ actor MediasetStreamResolver: StreamResolving {
         } catch {
             throw PlaybackFailure.apiChanged
         }
+    }
+
+    private func resolveAtresLive(
+        _ channel: Channel,
+        progress: @escaping @Sendable (PreparationPhase) async -> Void
+    ) async throws -> ResolvedStream {
+        guard let channelID = channel.slug?.trimmedNonEmpty else {
+            throw PlaybackFailure.invalidChannel
+        }
+        let result = try await atresPlayer.resolveLive(channelID: channelID)
+        await progress(.loadingPlayer)
+        return ResolvedStream(
+            title: channel.name,
+            url: result.streamURL,
+            headers: AtresAPIConfiguration.playbackHeaders,
+            allowsHeaderFallback: true,
+            subtitles: [],
+            artworkURL: nil,
+            isLive: true,
+            contentID: nil
+        )
+    }
+
+    private func resolveAtresVideo(
+        _ card: MediaCard,
+        ref: AtresContentRef,
+        progress: @escaping @Sendable (PreparationPhase) async -> Void
+    ) async throws -> ResolvedStream {
+        let result: AtresPlayableResult
+        switch ref {
+        case .episode(let contentID):
+            result = try await atresPlayer.resolveEpisode(contentID: contentID)
+        case .recording(let contentID):
+            result = try await atresPlayer.resolveRecording(contentID: contentID)
+        }
+        await progress(.loadingPlayer)
+        let subtitles = result.subtitleURL.map { [SubtitleTrack(url: $0, languageTag: "es")] } ?? []
+        return ResolvedStream(
+            title: card.title,
+            url: result.streamURL,
+            headers: AtresAPIConfiguration.playbackHeaders,
+            allowsHeaderFallback: true,
+            subtitles: subtitles,
+            artworkURL: card.artworkURL,
+            isLive: false,
+            contentID: card.id
+        )
     }
 
     private func resolveDirect(_ channel: Channel) throws -> ResolvedStream {

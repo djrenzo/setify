@@ -74,13 +74,34 @@ enum FavoriteKind: String, Codable, Sendable {
     case serie
     case miniserie
     case pelicula
+    case atresPrograma
+    case atresSerie
+    case atresPelicula
 
     var category: CatalogCategory {
         switch self {
-        case .programa: .programas
-        case .serie: .series
+        case .programa, .atresPrograma: .programas
+        case .serie, .atresSerie: .series
         case .miniserie: .miniseries
-        case .pelicula: .peliculas
+        case .pelicula, .atresPelicula: .peliculas
+        }
+    }
+
+    var isAtresplayer: Bool {
+        switch self {
+        case .atresPrograma, .atresSerie, .atresPelicula: true
+        case .programa, .serie, .miniserie, .pelicula: false
+        }
+    }
+
+    /// Maps a Mitele kind to its Atresplayer counterpart (used when favoriting from the
+    /// Atresplayer side of a merged catalog tab); returns itself for kinds with no counterpart.
+    var atresEquivalent: FavoriteKind {
+        switch self {
+        case .programa: .atresPrograma
+        case .serie: .atresSerie
+        case .pelicula: .atresPelicula
+        case .atresPrograma, .atresSerie, .atresPelicula, .miniserie: self
         }
     }
 }
@@ -120,9 +141,9 @@ struct FavoriteItem: Codable, Hashable, Identifiable, Sendable {
         tag = show.tag
     }
 
-    init(pelicula item: FlatCatalogItem) {
-        id = "\(FavoriteKind.pelicula.rawValue):\(item.id)"
-        kind = .pelicula
+    init(pelicula item: FlatCatalogItem, kind: FavoriteKind = .pelicula) {
+        id = "\(kind.rawValue):\(item.id)"
+        self.kind = kind
         refID = item.id
         title = item.title
         subtitle = nil
@@ -132,7 +153,9 @@ struct FavoriteItem: Codable, Hashable, Identifiable, Sendable {
     }
 
     var asShowSummary: ShowSummary? {
-        guard kind == .programa || kind == .serie else { return nil }
+        guard kind == .programa || kind == .serie || kind == .atresPrograma || kind == .atresSerie else {
+            return nil
+        }
         return ShowSummary(id: refID, title: title, subtitle: subtitle, posterURL: posterURL)
     }
 
@@ -142,7 +165,7 @@ struct FavoriteItem: Codable, Hashable, Identifiable, Sendable {
     }
 
     var asMediaCard: MediaCard? {
-        guard kind == .pelicula, let pageURL else { return nil }
+        guard kind == .pelicula || kind == .atresPelicula, let pageURL else { return nil }
         return MediaCard(id: refID, title: title, subtitle: nil, detail: nil, duration: nil, artworkURL: posterURL, pageURL: pageURL)
     }
 }
@@ -156,4 +179,12 @@ struct NumberedPage<Item: Sendable>: Sendable {
     let items: [Item]
     let currentPage: Int
     let totalPages: Int
+}
+
+/// Atresplayer's row/search endpoints use 0-based page numbers and a plain `hasNext` boolean
+/// (rather than Mediaset's 1-based `actualPage`/`totalPages`), so this mirrors that shape
+/// directly instead of overloading `NumberedPage`'s different convention.
+struct AtresPage<Item: Sendable>: Sendable {
+    let items: [Item]
+    let nextPage: Int?
 }

@@ -15,7 +15,7 @@ struct FavoritesView: View {
             .navigationTitle("Favoritos")
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: ShowRoute.self) { route in
-                ShowDetailView(show: route.show, model: model)
+                showDetailDestination(for: route.show, model: model)
             }
             .navigationDestination(for: MiniserieRoute.self) { route in
                 MiniserieEpisodesView(show: route.show, model: model)
@@ -51,7 +51,7 @@ struct FavoritesView: View {
 
     private func open(_ favorite: FavoriteItem) {
         switch favorite.kind {
-        case .programa, .serie:
+        case .programa, .serie, .atresPrograma, .atresSerie:
             if let show = favorite.asShowSummary {
                 path.append(ShowRoute(show: show))
             }
@@ -59,7 +59,7 @@ struct FavoritesView: View {
             if let show = favorite.asMiniserieShow {
                 path.append(MiniserieRoute(show: show))
             }
-        case .pelicula:
+        case .pelicula, .atresPelicula:
             if let card = favorite.asMediaCard {
                 model.playback.prepare(.video(card))
             }
