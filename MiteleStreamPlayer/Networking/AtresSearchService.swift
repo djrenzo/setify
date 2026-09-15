@@ -37,6 +37,7 @@ private struct AtresSearchResponse: Decodable, Sendable {
         let contentId: String?
         let formatId: String?
         let monoChapter: Bool?
+        let category: String?
     }
 
     let itemRows: [CardDTO]?
@@ -48,19 +49,37 @@ private extension SearchResult {
             return nil
         }
         let id = "atres:\(rawID)"
-        let posterURL = AtresAPIConfiguration.posterURL(from: dto.image?.pathVertical ?? dto.image?.pathHorizontal)
+        let posterURL = AtresAPIConfiguration.posterURL(pathHorizontal: dto.image?.pathHorizontal, pathVertical: dto.image?.pathVertical)
         if dto.monoChapter == true {
-            self = .playable(MediaCard(
-                id: id,
-                title: title,
-                subtitle: nil,
-                detail: nil,
-                duration: nil,
-                artworkURL: posterURL,
-                pageURL: AtresContentRef.movieFormat(rawID).pageURL
-            ))
+            self = .playable(
+                MediaCard(
+                    id: id,
+                    title: title,
+                    subtitle: nil,
+                    detail: nil,
+                    duration: nil,
+                    artworkURL: posterURL,
+                    pageURL: AtresContentRef.movieFormat(rawID).pageURL
+                ),
+                favoriteKind: .atresPelicula
+            )
         } else {
-            self = .show(ShowSummary(id: id, title: title, subtitle: nil, posterURL: posterURL))
+            self = .show(
+                ShowSummary(id: id, title: title, subtitle: nil, posterURL: posterURL),
+                favoriteKind: Self.atresShowKind(category: dto.category)
+            )
+        }
+    }
+
+    /// The free-text search spans every Atresplayer category at once, unlike the per-category row
+    /// listings — `category` (e.g. "Programas", "Series", "Documentales") is only used to pick the
+    /// closest matching label for the Favorites tab; anything not recognized falls back to the
+    /// broad "programa" bucket rather than failing to favorite the item at all.
+    private static func atresShowKind(category: String?) -> FavoriteKind {
+        switch category {
+        case "Series": .atresSerie
+        case "Noticias", "Informativos": .atresNoticia
+        default: .atresPrograma
         }
     }
 }

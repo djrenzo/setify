@@ -14,6 +14,19 @@ final class DownloadEngine: NSObject, AVAssetDownloadDelegate, @unchecked Sendab
     private var contentIDsByTaskID: [Int: String] = [:]
     private var tasksByContentID: [String: AVAssetDownloadTask] = [:]
 
+    /// `makeAssetDownloadTask(asset:...:options: nil)` only ever downloads the *default* media
+    /// selections — video plus the default audio track. A subtitle/CC rendition that isn't
+    /// flagged default (the usual case) is silently excluded, which is why AVKit's native
+    /// subtitle picker shows options while streaming but that option vanishes once downloaded.
+    /// Fixing this means firing extra, separate `AVAssetDownloadTask`s (one per subtitle option,
+    /// via `AVAssetDownloadTaskMediaSelectionKey`) against the *local* asset right after the
+    /// primary download finishes — Apple's documented pattern for adding media selections to an
+    /// existing offline asset. These are tracked in their own set, deliberately kept out of
+    /// `contentIDsByTaskID`/`tasksByContentID`: the primary download is already fully playable
+    /// and reported "finished" the moment its own task completes, so a bonus subtitle track
+    /// succeeding or failing afterward must never re-fire (or falsely fail) that same callback.
+    private var subtitleTaskIDs: Set<Int> = []
+
     var onProgress: (@Sendable (String, Double) -> Void)?
     var onFinished: (@Sendable (String, URL) -> Void)?
     var onFailed: (@Sendable (String, Error?) -> Void)?
@@ -84,7 +97,9 @@ final class DownloadEngine: NSObject, AVAssetDownloadDelegate, @unchecked Sendab
         totalTimeRangesLoaded loadedTimeRanges: [NSValue],
         timeRangeExpectedToLoad: CMTimeRange
     ) {
-        guard let contentID = synchronized({ contentIDsByTaskID[assetDownloadTask.taskIdentifier] }) else { return }
+        let taskID = assetDownloadTask.taskIdentifier
+        guard !synchronized({ subtitleTaskIDs.contains(taskID) }) else { return }
+        guard let contentID = synchronized({ contentIDsByTaskID[taskID] }) else { return }
         let expected = timeRangeExpectedToLoad.duration.seconds
         guard expected.isFinite, expected > 0 else { return }
         var loaded = 0.0
@@ -99,14 +114,46 @@ final class DownloadEngine: NSObject, AVAssetDownloadDelegate, @unchecked Sendab
         assetDownloadTask: AVAssetDownloadTask,
         didFinishDownloadingTo location: URL
     ) {
-        guard let contentID = synchronized({ contentIDsByTaskID[assetDownloadTask.taskIdentifier] }) else { return }
+        let taskID = assetDownloadTask.taskIdentifier
+        if synchronized({ subtitleTaskIDs.remove(taskID) }) != nil {
+            return
+        }
+        guard let contentID = synchronized({ contentIDsByTaskID[taskID] }) else { return }
+        downloadAdditionalSubtitleSelections(contentID: contentID, localAssetURL: location)
         onFinished?(contentID, location)
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
-        guard task is AVAssetDownloadTask, let contentID = removeTracking(taskID: task.taskIdentifier) else { return }
+        guard task is AVAssetDownloadTask else { return }
+        let taskID = task.taskIdentifier
+        if synchronized({ subtitleTaskIDs.remove(taskID) }) != nil {
+            return
+        }
+        guard let contentID = removeTracking(taskID: taskID) else { return }
         if let error {
             onFailed?(contentID, error)
+        }
+    }
+
+    /// Runs after the primary content has already finished downloading and been reported via
+    /// `onFinished`. Best-effort only: `asset.loadMediaSelectionGroup(for:)` or the follow-up
+    /// download can fail for all sorts of reasons (no subtitle rendition at all, a transient
+    /// network hiccup) and none of that should ever surface as a download failure for content
+    /// that's already fully downloaded and playable.
+    private func downloadAdditionalSubtitleSelections(contentID: String, localAssetURL: URL) {
+        Task {
+            let asset = AVURLAsset(url: localAssetURL)
+            guard let group = try? await asset.loadMediaSelectionGroup(for: .legible) else { return }
+            for option in group.options {
+                guard let task = session.makeAssetDownloadTask(
+                    asset: asset,
+                    assetTitle: option.displayName,
+                    assetArtworkData: nil,
+                    options: [AVAssetDownloadTaskMediaSelectionKey: option]
+                ) else { continue }
+                synchronized { _ = subtitleTaskIDs.insert(task.taskIdentifier) }
+                task.resume()
+            }
         }
     }
 

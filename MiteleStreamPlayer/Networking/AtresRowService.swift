@@ -88,7 +88,7 @@ private extension ShowSummary {
         id = "atres:\(rawID)"
         self.title = title
         subtitle = nil
-        posterURL = AtresAPIConfiguration.posterURL(from: dto.image?.pathVertical ?? dto.image?.pathHorizontal)
+        posterURL = AtresAPIConfiguration.posterURL(pathHorizontal: dto.image?.pathHorizontal, pathVertical: dto.image?.pathVertical)
     }
 }
 
@@ -97,7 +97,7 @@ private extension FlatCatalogItem {
         guard let rawID = dto.contentId?.nilIfBlank, let title = dto.title?.nilIfBlank else { return nil }
         id = "atres:\(rawID)"
         self.title = title
-        posterURL = AtresAPIConfiguration.posterURL(from: dto.image?.pathVertical ?? dto.image?.pathHorizontal)
+        posterURL = AtresAPIConfiguration.posterURL(pathHorizontal: dto.image?.pathHorizontal, pathVertical: dto.image?.pathVertical)
         pageURL = AtresContentRef.recording(rawID).pageURL
     }
 
@@ -107,7 +107,7 @@ private extension FlatCatalogItem {
         }
         id = "atres:\(rawID)"
         self.title = title
-        posterURL = AtresAPIConfiguration.posterURL(from: dto.image?.pathVertical ?? dto.image?.pathHorizontal)
+        posterURL = AtresAPIConfiguration.posterURL(pathHorizontal: dto.image?.pathHorizontal, pathVertical: dto.image?.pathVertical)
         pageURL = AtresContentRef.movieFormat(rawID).pageURL
     }
 }

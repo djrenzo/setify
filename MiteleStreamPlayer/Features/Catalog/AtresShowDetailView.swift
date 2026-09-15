@@ -9,12 +9,14 @@ struct AtresSeasonRoute: Hashable {
 @MainActor
 struct AtresShowDetailView: View {
     let show: ShowSummary
+    let favoriteKind: FavoriteKind
     let model: AppModel
 
     @State private var store: AtresSeasonsStore
 
-    init(show: ShowSummary, model: AppModel) {
+    init(show: ShowSummary, favoriteKind: FavoriteKind, model: AppModel) {
         self.show = show
+        self.favoriteKind = favoriteKind
         self.model = model
         _store = State(initialValue: AtresSeasonsStore(
             service: model.catalog.atresFormatPage,
@@ -25,7 +27,7 @@ struct AtresShowDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Temporadas").font(.title3.bold()).foregroundStyle(.white)
+                header
                 content
             }
             .padding(18)
@@ -37,6 +39,21 @@ struct AtresShowDetailView: View {
             AtresEpisodesListView(show: show, season: route.season, model: model)
         }
         .task { store.load() }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top) {
+            Text("Temporadas").font(.title3.bold()).foregroundStyle(.white)
+            Spacer(minLength: 12)
+            FavoriteHeartButton(
+                isFavorite: model.favorites.isFavorite(favoriteItem.id),
+                onToggle: { Task { await model.favorites.toggle(favoriteItem) } }
+            )
+        }
+    }
+
+    private var favoriteItem: FavoriteItem {
+        FavoriteItem(show: show, kind: favoriteKind)
     }
 
     @ViewBuilder

@@ -42,13 +42,13 @@ struct ShowSummary: Hashable, Identifiable, Sendable {
 /// clip-level hits are filtered out by the search services themselves before this is ever built;
 /// this type has no case for them.
 enum SearchResult: Identifiable, Hashable, Sendable {
-    case show(ShowSummary)
-    case playable(MediaCard)
+    case show(ShowSummary, favoriteKind: FavoriteKind)
+    case playable(MediaCard, favoriteKind: FavoriteKind)
 
     var id: String {
         switch self {
-        case .show(let show): "show:\(show.id)"
-        case .playable(let card): "playable:\(card.id)"
+        case .show(let show, _): "show:\(show.id)"
+        case .playable(let card, _): "playable:\(card.id)"
         }
     }
 }
@@ -172,6 +172,19 @@ struct FavoriteItem: Codable, Hashable, Identifiable, Sendable {
         subtitle = nil
         posterURL = item.posterURL
         pageURL = item.pageURL
+        tag = nil
+    }
+
+    /// For a directly-playable search hit, which surfaces as a `MediaCard` rather than the
+    /// `FlatCatalogItem` shape the Películas grid uses — otherwise identical to `init(pelicula:)`.
+    init(playable card: MediaCard, kind: FavoriteKind) {
+        id = "\(kind.rawValue):\(card.id)"
+        self.kind = kind
+        refID = card.id
+        title = card.title
+        subtitle = card.subtitle
+        posterURL = card.artworkURL
+        pageURL = card.pageURL
         tag = nil
     }
 

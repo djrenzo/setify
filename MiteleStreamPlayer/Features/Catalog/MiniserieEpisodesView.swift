@@ -20,6 +20,7 @@ struct MiniserieEpisodesView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
+                header
                 ForEach(store.episodes) { episode in
                     MiniserieEpisodeRow(
                         episode: episode,
@@ -51,6 +52,17 @@ struct MiniserieEpisodesView: View {
         .task { store.loadInitial() }
         .task { await model.watchProgress.loadIfNeeded() }
         .task { await model.downloads.loadIfNeeded() }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top) {
+            Text(show.title).font(.title3.bold()).foregroundStyle(.white)
+            Spacer(minLength: 12)
+            FavoriteHeartButton(
+                isFavorite: model.favorites.isFavorite(FavoriteItem(miniserie: show).id),
+                onToggle: { Task { await model.favorites.toggle(FavoriteItem(miniserie: show)) } }
+            )
+        }
     }
 
     private func mediaCard(for episode: MiniserieEpisode) -> MediaCard {

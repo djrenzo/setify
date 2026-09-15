@@ -31,11 +31,27 @@ enum AtresAPIConfiguration {
 
     /// Card `image.pathVertical`/`pathHorizontal` values are bare directory URLs, not files —
     /// fetching them directly 404s. A `{width}x{height}.jpg` file must be appended, and this CDN
-    /// only serves a handful of whitelisted sizes (most return `503`); `300x300` was confirmed
-    /// live against several images and works for both orientations.
-    static func posterURL(from basePath: String?) -> URL? {
-        guard let basePath, let base = URL(string: basePath) else { return nil }
-        return base.appendingPathComponent("300x300.jpg")
+    /// only serves a handful of whitelisted size combos — most others return `503`.
+    ///
+    /// Picking *which* whitelisted size matters more than just picking one that works: sizes the
+    /// real Atresplayer web/app clients don't request are essentially never pre-generated, so the
+    /// first `iOS` request for that exact size on a given image pays a one-time on-demand-resize
+    /// cost — confirmed live to take 10-16 seconds on a cache miss, which is what "artwork takes
+    /// very long to load" was. `640x360` (horizontal) was confirmed live to be already-cached
+    /// (<0.3s) on every one of ~20 freshly-fetched, never-before-requested catalog images tried,
+    /// i.e. it's a size real traffic already keeps warm — unlike the square crop this app first
+    /// shipped with, which nobody else ever requests. `360x640` (vertical) is the fallback for the
+    /// rare card with no horizontal image at all; it isn't quite as universally warm but is still
+    /// far better than an arbitrary size. The app crops to a square client-side regardless
+    /// (`SquarePosterImage`), so the source doesn't need to be square itself.
+    static func posterURL(pathHorizontal: String?, pathVertical: String?) -> URL? {
+        if let pathHorizontal, let base = URL(string: pathHorizontal) {
+            return base.appendingPathComponent("640x360.jpg")
+        }
+        if let pathVertical, let base = URL(string: pathVertical) {
+            return base.appendingPathComponent("360x640.jpg")
+        }
+        return nil
     }
 }
 

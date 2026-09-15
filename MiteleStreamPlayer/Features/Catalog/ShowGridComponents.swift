@@ -2,18 +2,21 @@ import SwiftUI
 
 struct ShowRoute: Hashable {
     let show: ShowSummary
+    let favoriteKind: FavoriteKind
 }
 
 /// `ShowRoute` is shared by both Mitele and Atresplayer show grids — an Atres-sourced
 /// `ShowSummary.id` is namespaced with an `"atres:"` prefix (see `AtresModels.swift`), which is
-/// enough to route to the right detail pipeline without a second route type.
+/// enough to route to the right detail pipeline without a second route type. `favoriteKind` rides
+/// along so the detail view can show its own favorite toggle without having to re-derive which
+/// category (programa/serie/atresNoticia/etc.) this particular show belongs to.
 @ViewBuilder
 @MainActor
-func showDetailDestination(for show: ShowSummary, model: AppModel) -> some View {
+func showDetailDestination(for show: ShowSummary, favoriteKind: FavoriteKind, model: AppModel) -> some View {
     if show.id.isAtresID {
-        AtresShowDetailView(show: show, model: model)
+        AtresShowDetailView(show: show, favoriteKind: favoriteKind, model: model)
     } else {
-        ShowDetailView(show: show, model: model)
+        ShowDetailView(show: show, favoriteKind: favoriteKind, model: model)
     }
 }
 
@@ -34,7 +37,7 @@ struct ShowGridView: View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(shows) { show in
-                    NavigationLink(value: ShowRoute(show: show)) {
+                    NavigationLink(value: ShowRoute(show: show, favoriteKind: favoriteKind)) {
                         ShowTile(show: show, isFavorite: favorites.isFavorite(favoriteID(for: show))) {
                             Task { await favorites.toggle(FavoriteItem(show: show, kind: favoriteKind)) }
                         }

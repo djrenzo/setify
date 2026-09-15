@@ -15,7 +15,7 @@ struct FavoritesView: View {
             .navigationTitle("Favoritos")
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: ShowRoute.self) { route in
-                showDetailDestination(for: route.show, model: model)
+                showDetailDestination(for: route.show, favoriteKind: route.favoriteKind, model: model)
             }
             .navigationDestination(for: MiniserieRoute.self) { route in
                 MiniserieEpisodesView(show: route.show, model: model)
@@ -53,7 +53,7 @@ struct FavoritesView: View {
         switch favorite.kind {
         case .programa, .serie, .atresPrograma, .atresSerie, .atresNoticia:
             if let show = favorite.asShowSummary {
-                path.append(ShowRoute(show: show))
+                path.append(ShowRoute(show: show, favoriteKind: favorite.kind))
             }
         case .miniserie:
             if let show = favorite.asMiniserieShow {

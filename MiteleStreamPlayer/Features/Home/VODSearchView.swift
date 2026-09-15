@@ -2,8 +2,9 @@ import SwiftUI
 
 struct VODSearchView: View {
     @Bindable var store: SearchStore
+    let favorites: FavoritesStore
     let onPlay: (MediaCard) -> Void
-    let onOpenShow: (ShowSummary) -> Void
+    let onOpenShow: (ShowSummary, FavoriteKind) -> Void
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -62,10 +63,20 @@ struct VODSearchView: View {
             LazyVStack {
                 ForEach(store.results) { result in
                     switch result {
-                    case .show(let show):
-                        ShowResultCard(show: show) { onOpenShow(show) }
-                    case .playable(let card):
-                        VODCard(card: card) { onPlay(card) }
+                    case .show(let show, let favoriteKind):
+                        ShowResultCard(
+                            show: show,
+                            isFavorite: favorites.isFavorite(FavoriteItem(show: show, kind: favoriteKind).id),
+                            onToggleFavorite: { Task { await favorites.toggle(FavoriteItem(show: show, kind: favoriteKind)) } },
+                            onTap: { onOpenShow(show, favoriteKind) }
+                        )
+                    case .playable(let card, let favoriteKind):
+                        VODCard(
+                            card: card,
+                            isFavorite: favorites.isFavorite(FavoriteItem(playable: card, kind: favoriteKind).id),
+                            onToggleFavorite: { Task { await favorites.toggle(FavoriteItem(playable: card, kind: favoriteKind)) } },
+                            onPlay: { onPlay(card) }
+                        )
                     }
                 }
             }
@@ -95,6 +106,8 @@ private struct SearchInvitationView: View {
 
 private struct VODCard: View {
     let card: MediaCard
+    let isFavorite: Bool
+    let onToggleFavorite: () -> Void
     let onPlay: () -> Void
 
     var body: some View {
@@ -134,6 +147,9 @@ private struct VODCard: View {
         }
         .frame(width: 116, height: 72)
         .clipShape(.rect(cornerRadius: 12))
+        .overlay(alignment: .topTrailing) {
+            FavoriteHeartButton(isFavorite: isFavorite, onToggle: onToggleFavorite)
+        }
     }
 
     private var metadata: some View {
@@ -150,6 +166,8 @@ private struct VODCard: View {
 
 private struct ShowResultCard: View {
     let show: ShowSummary
+    let isFavorite: Bool
+    let onToggleFavorite: () -> Void
     let onTap: () -> Void
 
     var body: some View {
@@ -191,5 +209,8 @@ private struct ShowResultCard: View {
         }
         .frame(width: 116, height: 72)
         .clipShape(.rect(cornerRadius: 12))
+        .overlay(alignment: .topTrailing) {
+            FavoriteHeartButton(isFavorite: isFavorite, onToggle: onToggleFavorite)
+        }
     }
 }

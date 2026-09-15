@@ -7,12 +7,14 @@ struct SeasonRoute: Hashable {
 @MainActor
 struct ShowDetailView: View {
     let show: ShowSummary
+    let favoriteKind: FavoriteKind
     let model: AppModel
 
     @State private var store: SeasonsStore
 
-    init(show: ShowSummary, model: AppModel) {
+    init(show: ShowSummary, favoriteKind: FavoriteKind, model: AppModel) {
         self.show = show
+        self.favoriteKind = favoriteKind
         self.model = model
         _store = State(initialValue: SeasonsStore(service: model.catalog.seriesPage, refID: show.id))
     }
@@ -35,12 +37,23 @@ struct ShowDetailView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let subtitle = show.subtitle {
-                Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 6) {
+                if let subtitle = show.subtitle {
+                    Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
+                }
+                Text("Temporadas").font(.title3.bold()).foregroundStyle(.white)
             }
-            Text("Temporadas").font(.title3.bold()).foregroundStyle(.white)
+            Spacer(minLength: 12)
+            FavoriteHeartButton(
+                isFavorite: model.favorites.isFavorite(favoriteItem.id),
+                onToggle: { Task { await model.favorites.toggle(favoriteItem) } }
+            )
         }
+    }
+
+    private var favoriteItem: FavoriteItem {
+        FavoriteItem(show: show, kind: favoriteKind)
     }
 
     @ViewBuilder

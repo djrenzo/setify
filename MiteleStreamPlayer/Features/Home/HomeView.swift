@@ -35,7 +35,7 @@ struct HomeView: View {
                 CategoryRootView(category: category, model: model)
             }
             .navigationDestination(for: ShowRoute.self) { route in
-                showDetailDestination(for: route.show, model: model)
+                showDetailDestination(for: route.show, favoriteKind: route.favoriteKind, model: model)
             }
         }
         .tint(Color.cinemaAccent)
@@ -59,7 +59,12 @@ struct HomeView: View {
                         onManage: { sheet = .channels }
                     )
                 } else {
-                    VODSearchView(store: model.search, onPlay: playVideo, onOpenShow: { path.append(ShowRoute(show: $0)) })
+                    VODSearchView(
+                        store: model.search,
+                        favorites: model.favorites,
+                        onPlay: playVideo,
+                        onOpenShow: { show, kind in path.append(ShowRoute(show: show, favoriteKind: kind)) }
+                    )
                 }
             }
             .padding(.horizontal, 18)

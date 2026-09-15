@@ -153,13 +153,24 @@ private extension SearchResult {
         switch dto.cardLink?.referenceType?.lowercased() {
         case "series":
             guard let show = ShowSummary(searchDTO: dto) else { return nil }
-            self = .show(show)
+            self = .show(show, favoriteKind: Self.miteleShowKind(pageValue: dto.cardLink?.value))
         case "movie":
             guard let card = MediaCard(searchDTO: dto) else { return nil }
-            self = .playable(card)
+            self = .playable(card, favoriteKind: .pelicula)
         default:
             return nil
         }
+    }
+
+    /// The search response has no explicit "programa" vs "serie" field, but Mitele's own page
+    /// URLs consistently distinguish them by path (`/programas-tv/...` vs `/series-online/...`) —
+    /// used only to pick the right label in the Favorites tab, never for navigation, since both
+    /// kinds route through the exact same `ShowDetailView`.
+    private static func miteleShowKind(pageValue: String?) -> FavoriteKind {
+        guard let pageValue, let url = URL(string: pageValue), url.path.contains("/series-online/") else {
+            return .programa
+        }
+        return .serie
     }
 }
 

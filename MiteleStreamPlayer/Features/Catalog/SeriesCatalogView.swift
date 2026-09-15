@@ -38,7 +38,7 @@ struct SeriesCatalogView: View {
         .navigationTitle("Series")
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(for: ShowRoute.self) { route in
-            showDetailDestination(for: route.show, model: model)
+            showDetailDestination(for: route.show, favoriteKind: route.favoriteKind, model: model)
         }
     }
 }
