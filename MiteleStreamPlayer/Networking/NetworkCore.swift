@@ -73,6 +73,27 @@ actor HTTPClient {
             throw HTTPClientError.decoding
         }
     }
+
+    /// Unlike `data(for:)`, doesn't throw on a non-2xx status — the response body is returned
+    /// either way. Needed when the error body itself carries information worth inspecting (e.g.
+    /// Atresplayer's `player/v1/episode` distinguishing `required_registered` from
+    /// `required_paid` in its `403` body — see `AtresPlayerService`).
+    func rawData(for endpoint: Endpoint) async throws -> (status: Int, data: Data) {
+        do {
+            let (data, response) = try await session.data(for: endpoint.request())
+            try Task.checkCancellation()
+            guard let http = response as? HTTPURLResponse else {
+                throw HTTPClientError.invalidResponse
+            }
+            guard data.count <= maximumResponseSize else {
+                throw HTTPClientError.responseTooLarge
+            }
+            return (http.statusCode, data)
+        } catch let error as URLError {
+            if error.code == .cancelled { throw CancellationError() }
+            throw HTTPClientError.transport(error.code.rawValue)
+        }
+    }
 }
 
 extension HTTPClientError {

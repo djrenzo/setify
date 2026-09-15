@@ -51,7 +51,7 @@ struct FavoritesView: View {
 
     private func open(_ favorite: FavoriteItem) {
         switch favorite.kind {
-        case .programa, .serie, .atresPrograma, .atresSerie:
+        case .programa, .serie, .atresPrograma, .atresSerie, .atresNoticia:
             if let show = favorite.asShowSummary {
                 path.append(ShowRoute(show: show))
             }

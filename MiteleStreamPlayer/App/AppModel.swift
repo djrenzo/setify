@@ -51,7 +51,11 @@ final class AppModel {
             atresPlayer: AtresPlayerService(client: client, sessionProvider: atresVault)
         )
         let channelStore = ChannelStore(repository: JSONChannelRepository())
-        let searchStore = SearchStore(service: MiteleSearchService(client: client))
+        let searchService = CombinedSearchService(
+            mitele: MiteleSearchService(client: client),
+            atres: AtresSearchService(client: client)
+        )
+        let searchStore = SearchStore(service: searchService)
         let playback = PlaybackCoordinator(resolver: resolver, identityService: identity)
         return AppModel(
             channels: channelStore,

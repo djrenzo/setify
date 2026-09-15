@@ -28,6 +28,15 @@ enum AtresAPIConfiguration {
         headers["Cookie"] = session.hasPrefix("A3PSID=") ? session : "A3PSID=\(session)"
         return headers
     }
+
+    /// Card `image.pathVertical`/`pathHorizontal` values are bare directory URLs, not files —
+    /// fetching them directly 404s. A `{width}x{height}.jpg` file must be appended, and this CDN
+    /// only serves a handful of whitelisted sizes (most return `503`); `300x300` was confirmed
+    /// live against several images and works for both orientations.
+    static func posterURL(from basePath: String?) -> URL? {
+        guard let basePath, let base = URL(string: basePath) else { return nil }
+        return base.appendingPathComponent("300x300.jpg")
+    }
 }
 
 enum AtresAPIURL {
@@ -38,6 +47,20 @@ enum AtresAPIURL {
     }
 
     static let rowSearch = base.appendingPathComponent("client/v1/row/search")
+
+    /// "Todas las películas" FORMAT cards carry no seasons — their single playable episode is
+    /// found by searching by `formatId` alone, with no `seasonId`. See
+    /// API_STREAM_RESOLUTION_ATRES.md §16 and `AtresPlayerService.resolveMovie`.
+    static func episodesByFormat(_ formatID: String) -> URL {
+        var components = URLComponents(url: rowSearch, resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "entityType", value: "ATPEpisode"),
+            URLQueryItem(name: "formatId", value: formatID),
+            URLQueryItem(name: "size", value: "1"),
+            URLQueryItem(name: "page", value: "0")
+        ]
+        return components.url!
+    }
 
     static func formatPage(_ formatID: String) -> URL {
         base.appendingPathComponent("client/v1/page/format/\(formatID)")
@@ -69,6 +92,8 @@ enum AtresCatalogID {
     static let categoryProgramas = "5a6a1ba0986b281d18a512b9"
     static let categorySeries = "5a6a1b22986b281d18a512b8"
     static let categoryCine = "5b5f2f777ed1a86860102144"
+    /// "Informativos" in the reference addon's menu — Noticias here.
+    static let categoryInformativos = "5a6a215e986b281d18a512bc"
 }
 
 /// Builds the fixed (page/size-less) base URLs for the two catalog shapes — `AtresRowService`
@@ -91,6 +116,20 @@ enum AtresCatalogURLBuilder {
         components.queryItems = [
             URLQueryItem(name: "entityType", value: "ATPRecording"),
             URLQueryItem(name: "categoryId", value: categoryID)
+        ]
+        return components.url!
+    }
+
+    /// Free-text FORMAT search — unlike category listings, this returns only top-level content
+    /// (shows and monoChapter movies alike, never bare episodes/clips) across every Atresplayer
+    /// category at once. See API_STREAM_RESOLUTION_ATRES.md §18.1 ("Buscador").
+    static func formatTextSearch(text: String) -> URL {
+        var components = URLComponents(url: AtresAPIURL.rowSearch, resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "entityType", value: "ATPFormat"),
+            URLQueryItem(name: "text", value: text),
+            URLQueryItem(name: "size", value: "40"),
+            URLQueryItem(name: "page", value: "0")
         ]
         return components.url!
     }

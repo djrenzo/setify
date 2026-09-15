@@ -105,7 +105,7 @@ private extension MediaCard {
         subtitle = dto.subTitle?.nilIfBlank
         detail = dto.description?.nilIfBlank
         duration = nil
-        artworkURL = (dto.image?.pathHorizontal ?? dto.image?.pathVertical).flatMap(URL.init(string:))
+        artworkURL = AtresAPIConfiguration.posterURL(from: dto.image?.pathHorizontal ?? dto.image?.pathVertical)
         pageURL = AtresContentRef.episode(rawID).pageURL
     }
 }

@@ -49,17 +49,27 @@ final class AtresShowCatalogStore {
 @MainActor
 @Observable
 final class AtresRecordingCatalogStore {
+    /// Both "últimos 7 días" (flat RECORDING cards) and "todas las películas" (FORMAT cards
+    /// resolved through the movie lookup, see `AtresPlayerService.resolveMovie`) end up as the
+    /// same flat `FlatCatalogItem` shape here — only the fetch call differs.
+    enum Source {
+        case recordings
+        case movieFormats
+    }
+
     private let service: any AtresRowFetching
     private let baseURL: URL
+    private let source: Source
     private var nextPage: Int? = 0
 
     var items: [FlatCatalogItem] = []
     var isLoading = false
     var errorMessage: String?
 
-    init(service: any AtresRowFetching, baseURL: URL) {
+    init(service: any AtresRowFetching, baseURL: URL, source: Source = .recordings) {
         self.service = service
         self.baseURL = baseURL
+        self.source = source
     }
 
     func loadInitial() {
@@ -74,7 +84,13 @@ final class AtresRecordingCatalogStore {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let result = try await service.fetchRecordings(baseURL: baseURL, page: page)
+                let result: AtresPage<FlatCatalogItem>
+                switch source {
+                case .recordings:
+                    result = try await service.fetchRecordings(baseURL: baseURL, page: page)
+                case .movieFormats:
+                    result = try await service.fetchMovieFormats(baseURL: baseURL, page: page)
+                }
                 try Task.checkCancellation()
                 items.append(contentsOf: result.items)
                 nextPage = result.nextPage

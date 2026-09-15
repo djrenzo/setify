@@ -8,7 +8,7 @@ final class SearchStore {
     private var task: Task<Void, Never>?
 
     var query = ""
-    var results: [MediaCard] = []
+    var results: [SearchResult] = []
     var isLoading = false
     var hasSearched = false
     var errorMessage: String?

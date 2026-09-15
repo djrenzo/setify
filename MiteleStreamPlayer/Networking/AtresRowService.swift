@@ -3,8 +3,12 @@ import Foundation
 protocol AtresRowFetching: Sendable {
     /// FORMAT cards (shows) — Programas/Series/Cine-as-series listings.
     func fetchFormats(baseURL: URL, page: Int) async throws -> AtresPage<ShowSummary>
-    /// RECORDING cards (movies/specials) — flat, directly playable.
+    /// RECORDING cards ("últimos 7 días" movies/specials) — flat, directly playable.
     func fetchRecordings(baseURL: URL, page: Int) async throws -> AtresPage<FlatCatalogItem>
+    /// "Todas las películas" — also FORMAT-shaped (monoChapter, no seasons — a data-modeling
+    /// quirk, see API_STREAM_RESOLUTION_ATRES.md §16), but presented and played as a flat item
+    /// like a recording, not browsed into like a show.
+    func fetchMovieFormats(baseURL: URL, page: Int) async throws -> AtresPage<FlatCatalogItem>
 }
 
 /// Wraps Atresplayer's single row-listing workhorse endpoint (`GET client/v1/row/{id}` or
@@ -23,6 +27,12 @@ struct AtresRowService: AtresRowFetching, Sendable {
     func fetchRecordings(baseURL: URL, page: Int) async throws -> AtresPage<FlatCatalogItem> {
         let response = try await fetchRow(baseURL: baseURL, page: page)
         let items = (response.itemRows ?? []).compactMap(FlatCatalogItem.init(atresRecording:))
+        return AtresPage(items: items, nextPage: nextPage(from: response.pageInfo, requested: page))
+    }
+
+    func fetchMovieFormats(baseURL: URL, page: Int) async throws -> AtresPage<FlatCatalogItem> {
+        let response = try await fetchRow(baseURL: baseURL, page: page)
+        let items = (response.itemRows ?? []).compactMap(FlatCatalogItem.init(atresMovieFormat:))
         return AtresPage(items: items, nextPage: nextPage(from: response.pageInfo, requested: page))
     }
 
@@ -78,7 +88,7 @@ private extension ShowSummary {
         id = "atres:\(rawID)"
         self.title = title
         subtitle = nil
-        posterURL = (dto.image?.pathVertical ?? dto.image?.pathHorizontal).flatMap(URL.init(string:))
+        posterURL = AtresAPIConfiguration.posterURL(from: dto.image?.pathVertical ?? dto.image?.pathHorizontal)
     }
 }
 
@@ -87,8 +97,18 @@ private extension FlatCatalogItem {
         guard let rawID = dto.contentId?.nilIfBlank, let title = dto.title?.nilIfBlank else { return nil }
         id = "atres:\(rawID)"
         self.title = title
-        posterURL = (dto.image?.pathVertical ?? dto.image?.pathHorizontal).flatMap(URL.init(string:))
+        posterURL = AtresAPIConfiguration.posterURL(from: dto.image?.pathVertical ?? dto.image?.pathHorizontal)
         pageURL = AtresContentRef.recording(rawID).pageURL
+    }
+
+    init?(atresMovieFormat dto: AtresRowResponse.CardDTO) {
+        guard let rawID = (dto.formatId ?? dto.contentId)?.nilIfBlank, let title = dto.title?.nilIfBlank else {
+            return nil
+        }
+        id = "atres:\(rawID)"
+        self.title = title
+        posterURL = AtresAPIConfiguration.posterURL(from: dto.image?.pathVertical ?? dto.image?.pathHorizontal)
+        pageURL = AtresContentRef.movieFormat(rawID).pageURL
     }
 }
 

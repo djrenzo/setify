@@ -130,6 +130,7 @@ enum PlaybackFailure: Error, Sendable {
     case missingCredentials
     case sessionExpired
     case requiresAccount
+    case requiresSubscription
     case apiChanged
     case unavailableClearStream
     case invalidChannel
@@ -142,6 +143,7 @@ enum PlaybackFailure: Error, Sendable {
         case .missingCredentials: "Falta la sesión"
         case .sessionExpired: "La sesión ha caducado"
         case .requiresAccount: "Requiere cuenta"
+        case .requiresSubscription: "Requiere suscripción de pago"
         case .apiChanged: "El servicio ha cambiado"
         case .unavailableClearStream: "Contenido no compatible"
         case .invalidChannel: "Canal no válido"
@@ -158,7 +160,9 @@ enum PlaybackFailure: Error, Sendable {
         case .sessionExpired:
             "Actualiza los valores GMID y COOKIE desde Sesión del prototipo."
         case .requiresAccount:
-            "Este contenido requiere una cuenta de Atresplayer. El inicio de sesión aún no está disponible en esta app."
+            "Este contenido requiere una cuenta de Atresplayer registrada. Añade tu propia cookie A3PSID en Sesiones de streaming, o actualízala si ya has puesto una y ha caducado."
+        case .requiresSubscription:
+            "Este contenido requiere una suscripción de pago de Atresplayer. La sesión configurada no incluye ese plan, así que ninguna cuenta gratuita o solo registrada podrá reproducirlo."
         case .apiChanged:
             "La respuesta ya no tiene el formato esperado. Este acceso privado puede cambiar sin aviso."
         case .unavailableClearStream:

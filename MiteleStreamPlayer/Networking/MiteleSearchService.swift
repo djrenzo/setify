@@ -1,7 +1,7 @@
 import Foundation
 
 protocol MediaSearching: Sendable {
-    func search(query: String) async throws -> [MediaCard]
+    func search(query: String) async throws -> [SearchResult]
 }
 
 struct MiteleSearchService: MediaSearching {
@@ -29,7 +29,7 @@ struct MiteleSearchService: MediaSearching {
 
     let client: HTTPClient
 
-    func search(query: String) async throws -> [MediaCard] {
+    func search(query: String) async throws -> [SearchResult] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
 
@@ -50,7 +50,7 @@ struct MiteleSearchService: MediaSearching {
             if response.data == nil, !(response.errors?.isEmpty ?? true) {
                 throw PlaybackFailure.apiChanged
             }
-            return response.cards.compactMap(MediaCard.init(dto:))
+            return response.cards.compactMap(SearchResult.init(mitele:))
         } catch let error as HTTPClientError {
             throw error.playbackFailure
         }
@@ -144,12 +144,42 @@ private struct SearchCardDTO: Decodable, Sendable {
     let cardLink: LinkDTO?
 }
 
+/// Search returns a mix of shows ("series"), movies ("movie") and episode/clip hits ("video") —
+/// all in the same flat card shape. Episode-level hits are dropped entirely (search should never
+/// surface anything below "top level content"); shows route to the browsable `ShowSummary` case,
+/// movies to the directly-playable `MediaCard` case, exactly like the Programas/Peliculas listings.
+private extension SearchResult {
+    init?(mitele dto: SearchCardDTO) {
+        switch dto.cardLink?.referenceType?.lowercased() {
+        case "series":
+            guard let show = ShowSummary(searchDTO: dto) else { return nil }
+            self = .show(show)
+        case "movie":
+            guard let card = MediaCard(searchDTO: dto) else { return nil }
+            self = .playable(card)
+        default:
+            return nil
+        }
+    }
+}
+
+private extension ShowSummary {
+    /// Same `ref_id`/poster template as the Programas listing (`GraphQLCatalogService`) —
+    /// `cardLink.referenceId` on a "series" search hit is the same opaque show id used there.
+    init?(searchDTO dto: SearchCardDTO) {
+        guard let id = dto.cardLink?.referenceId?.nilIfBlank else { return nil }
+        self.id = id
+        title = dto.cardTitle?.nilIfBlank ?? "Mitele"
+        subtitle = dto.cardEditorialMetadata?.nilIfBlank ?? dto.cardText?.nilIfBlank
+        posterURL = URL(
+            string: "https://img-prod-api2.mediasetplay.mediaset.it/api/images/mse/v5/esp/\(id)/image_vertical/500/700?r="
+        )
+    }
+}
+
 private extension MediaCard {
-    init?(dto: SearchCardDTO) {
-        guard let link = dto.cardLink?.value,
-              let pageURL = URL(string: link),
-              pageURL.scheme == "https",
-              dto.cardLink?.referenceType?.lowercased() == "video" || pageURL.path.contains("/player/") else {
+    init?(searchDTO dto: SearchCardDTO) {
+        guard let link = dto.cardLink?.value, let pageURL = URL(string: link), pageURL.scheme == "https" else {
             return nil
         }
         let fallbackID = pageURL.absoluteString

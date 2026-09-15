@@ -5,6 +5,7 @@ enum CatalogCategory: String, CaseIterable, Identifiable, Hashable {
     case series
     case miniseries
     case peliculas
+    case noticias
 
     var id: Self { self }
 
@@ -14,6 +15,7 @@ enum CatalogCategory: String, CaseIterable, Identifiable, Hashable {
         case .series: "Series"
         case .miniseries: "Miniseries"
         case .peliculas: "Películas"
+        case .noticias: "Noticias"
         }
     }
 
@@ -23,6 +25,7 @@ enum CatalogCategory: String, CaseIterable, Identifiable, Hashable {
         case .series: "play.tv.fill"
         case .miniseries: "rectangle.stack.fill"
         case .peliculas: "film.fill"
+        case .noticias: "newspaper.fill"
         }
     }
 }
@@ -32,6 +35,22 @@ struct ShowSummary: Hashable, Identifiable, Sendable {
     let title: String
     let subtitle: String?
     let posterURL: URL?
+}
+
+/// A search hit, restricted to top-level content only — a browsable show (same granularity as
+/// Programas/Series/Noticias) or something directly playable (a movie/recording). Episode- and
+/// clip-level hits are filtered out by the search services themselves before this is ever built;
+/// this type has no case for them.
+enum SearchResult: Identifiable, Hashable, Sendable {
+    case show(ShowSummary)
+    case playable(MediaCard)
+
+    var id: String {
+        switch self {
+        case .show(let show): "show:\(show.id)"
+        case .playable(let card): "playable:\(card.id)"
+        }
+    }
 }
 
 struct Season: Hashable, Identifiable, Sendable {
@@ -77,6 +96,9 @@ enum FavoriteKind: String, Codable, Sendable {
     case atresPrograma
     case atresSerie
     case atresPelicula
+    /// Noticias has no Mitele counterpart — it's an Atresplayer-only category (Informativos in
+    /// the reference addon), so unlike the other `atres*` kinds this one has no Mitele sibling.
+    case atresNoticia
 
     var category: CatalogCategory {
         switch self {
@@ -84,12 +106,13 @@ enum FavoriteKind: String, Codable, Sendable {
         case .serie, .atresSerie: .series
         case .miniserie: .miniseries
         case .pelicula, .atresPelicula: .peliculas
+        case .atresNoticia: .noticias
         }
     }
 
     var isAtresplayer: Bool {
         switch self {
-        case .atresPrograma, .atresSerie, .atresPelicula: true
+        case .atresPrograma, .atresSerie, .atresPelicula, .atresNoticia: true
         case .programa, .serie, .miniserie, .pelicula: false
         }
     }
@@ -101,7 +124,7 @@ enum FavoriteKind: String, Codable, Sendable {
         case .programa: .atresPrograma
         case .serie: .atresSerie
         case .pelicula: .atresPelicula
-        case .atresPrograma, .atresSerie, .atresPelicula, .miniserie: self
+        case .atresPrograma, .atresSerie, .atresPelicula, .atresNoticia, .miniserie: self
         }
     }
 }
@@ -153,7 +176,7 @@ struct FavoriteItem: Codable, Hashable, Identifiable, Sendable {
     }
 
     var asShowSummary: ShowSummary? {
-        guard kind == .programa || kind == .serie || kind == .atresPrograma || kind == .atresSerie else {
+        guard kind == .programa || kind == .serie || kind == .atresPrograma || kind == .atresSerie || kind == .atresNoticia else {
             return nil
         }
         return ShowSummary(id: refID, title: title, subtitle: subtitle, posterURL: posterURL)

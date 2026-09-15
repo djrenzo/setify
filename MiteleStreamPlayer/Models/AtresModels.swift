@@ -9,6 +9,10 @@ import Foundation
 enum AtresContentRef: Sendable {
     case episode(String)
     case recording(String)
+    /// "Todas las películas" cards are FORMAT-shaped (a `formatId`, `monoChapter: true`, no
+    /// `seasons`) rather than flat RECORDING cards — see API_STREAM_RESOLUTION_ATRES.md §16 — so
+    /// resolving one takes an extra lookup step the resolver handles (see `resolveMovie`).
+    case movieFormat(String)
 
     private static let scheme = "atresplayer"
 
@@ -18,6 +22,8 @@ enum AtresContentRef: Sendable {
             URL(string: "\(Self.scheme)://episode/\(id)")!
         case .recording(let id):
             URL(string: "\(Self.scheme)://recording/\(id)")!
+        case .movieFormat(let id):
+            URL(string: "\(Self.scheme)://movie/\(id)")!
         }
     }
 
@@ -28,6 +34,7 @@ enum AtresContentRef: Sendable {
         switch url.host {
         case "episode": self = .episode(id)
         case "recording": self = .recording(id)
+        case "movie": self = .movieFormat(id)
         default: return nil
         }
     }

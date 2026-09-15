@@ -3,12 +3,13 @@ import SwiftUI
 struct VODSearchView: View {
     @Bindable var store: SearchStore
     let onPlay: (MediaCard) -> Void
+    let onOpenShow: (ShowSummary) -> Void
 
     var body: some View {
         VStack(alignment: .leading) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("A la carta").font(.title3.bold())
-                Text("Busca programas y episodios de Mitele").font(.caption).foregroundStyle(.secondary)
+                Text("Busca programas, series y películas de Mitele y Atresplayer").font(.caption).foregroundStyle(.secondary)
             }
             searchField
             resultContent
@@ -42,7 +43,7 @@ struct VODSearchView: View {
         if store.isLoading {
             VStack {
                 ProgressView().controlSize(.large).tint(Color.cinemaAccent)
-                Text("Buscando en Mitele…").font(.callout).foregroundStyle(.secondary)
+                Text("Buscando…").font(.callout).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, minHeight: 220)
         } else if let message = store.errorMessage {
@@ -59,8 +60,13 @@ struct VODSearchView: View {
             SearchInvitationView()
         } else {
             LazyVStack {
-                ForEach(store.results) { card in
-                    VODCard(card: card) { onPlay(card) }
+                ForEach(store.results) { result in
+                    switch result {
+                    case .show(let show):
+                        ShowResultCard(show: show) { onOpenShow(show) }
+                    case .playable(let card):
+                        VODCard(card: card) { onPlay(card) }
+                    }
                 }
             }
         }
@@ -135,9 +141,55 @@ private struct VODCard: View {
             if let duration = card.duration {
                 Label(duration, systemImage: "clock")
             }
-            Text("MITELE").fontWeight(.bold).foregroundStyle(Color.cinemaAccent)
+            Text(card.id.isAtresID ? "ATRESPLAYER" : "MITELE").fontWeight(.bold).foregroundStyle(Color.cinemaAccent)
         }
         .font(.caption)
         .foregroundStyle(.secondary)
+    }
+}
+
+private struct ShowResultCard: View {
+    let show: ShowSummary
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 14) {
+                artwork
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(show.title).font(.headline).lineLimit(2)
+                    if let subtitle = show.subtitle {
+                        Text(subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Text(show.id.isAtresID ? "ATRESPLAYER" : "MITELE")
+                        .font(.caption.bold())
+                        .foregroundStyle(Color.cinemaAccent)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(12)
+            .contentShape(.rect)
+            .cinemaCard()
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Ver \(show.title)")
+    }
+
+    private var artwork: some View {
+        AsyncImage(url: show.posterURL) { phase in
+            switch phase {
+            case .success(let image): image.resizable().scaledToFill()
+            default:
+                ZStack {
+                    Color.cinemaSurfaceRaised
+                    Image(systemName: "tv").foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(width: 116, height: 72)
+        .clipShape(.rect(cornerRadius: 12))
     }
 }

@@ -95,6 +95,8 @@ actor MediasetStreamResolver: StreamResolving {
             result = try await atresPlayer.resolveEpisode(contentID: contentID)
         case .recording(let contentID):
             result = try await atresPlayer.resolveRecording(contentID: contentID)
+        case .movieFormat(let formatID):
+            result = try await atresPlayer.resolveMovie(formatID: formatID)
         }
         await progress(.loadingPlayer)
         let subtitles = result.subtitleURL.map { [SubtitleTrack(url: $0, languageTag: "es")] } ?? []

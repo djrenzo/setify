@@ -42,7 +42,16 @@ struct CategoryRootView: View {
                 store: PeliculasCatalogStore(service: model.catalog.editorialIndex),
                 atresStore: AtresRecordingCatalogStore(
                     service: model.catalog.atresRow,
-                    baseURL: AtresCatalogURLBuilder.recordingSearch(categoryID: AtresCatalogID.categoryCine)
+                    baseURL: AtresCatalogURLBuilder.formatSearch(categoryID: AtresCatalogID.categoryCine, sortType: "THE_MOST"),
+                    source: .movieFormats
+                ),
+                model: model
+            )
+        case .noticias:
+            NoticiasCatalogView(
+                store: AtresShowCatalogStore(
+                    service: model.catalog.atresRow,
+                    baseURL: AtresCatalogURLBuilder.formatSearch(categoryID: AtresCatalogID.categoryInformativos, sortType: "THE_MOST")
                 ),
                 model: model
             )
