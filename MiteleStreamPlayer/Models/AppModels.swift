@@ -166,7 +166,7 @@ enum PlaybackFailure: Error, Sendable {
         case .apiChanged:
             "La respuesta ya no tiene el formato esperado. Este acceso privado puede cambiar sin aviso."
         case .unavailableClearStream:
-            "Esta señal solo ofrece una variante protegida y el prototipo no implementa FairPlay."
+            "Este contenido solo se ofrece con protección FairPlay, que esta app no admite. Otros episodios pueden seguir funcionando."
         case .invalidChannel:
             "Revisa el slug o la dirección del canal en Gestionar canales."
         case .invalidURL:

@@ -262,7 +262,27 @@ actor MediasetStreamResolver: StreamResolving {
             if response.errorCode != nil { throw PlaybackFailure.sessionExpired }
             throw PlaybackFailure.apiChanged
         }
-        return try finalManifestURL(stream: stream, token: token)
+        let url = try finalManifestURL(stream: stream, token: token)
+        if stream.range(of: "hls-fairplay.ism", options: .caseInsensitive) != nil {
+            try await verifyClearVariantExists(at: url)
+        }
+        return url
+    }
+
+    /// The clear `main.ism` variant swapped in by `finalManifestURL` isn't guaranteed to exist —
+    /// some uploads are packaged FairPlay-only, and the CDN then answers the clear manifest with
+    /// `403` even though the token is valid. Probing it here surfaces that as a clear
+    /// "unsupported content" failure instead of an opaque AVPlayer error. Transport errors are
+    /// deliberately ignored so a flaky probe doesn't block playback AVPlayer might manage.
+    private func verifyClearVariantExists(at url: URL) async throws {
+        let endpoint = Endpoint(url: url, headers: APIConfiguration.mediasetPlaybackHeaders, timeout: 15)
+        guard let (status, _) = try? await client.rawData(for: endpoint) else {
+            try Task.checkCancellation()
+            return
+        }
+        if status == 403 || status == 404 {
+            throw PlaybackFailure.unavailableClearStream
+        }
     }
 
     private func fetchCaronte(url: URL, headers: [String: String]) async throws -> CaronteResponse {
