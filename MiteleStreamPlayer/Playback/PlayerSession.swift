@@ -1,4 +1,5 @@
 import AVFoundation
+import AVKit
 import Foundation
 import MediaPlayer
 import Observation
@@ -43,8 +44,14 @@ final class PlayerSession {
     var failure: PlaybackFailure?
     var subtitlesEnabled = true
     var subtitleText: String?
+    /// `true` while playing or buffering towards playing — drives the Now Playing bar's button.
+    var isPlaying = false
+    /// Fraction watched, for VOD only — `nil` for live streams or before the duration is known.
+    var progress: Double?
+    var artworkImage: UIImage?
 
     var hasSubtitles: Bool { !stream.subtitles.isEmpty }
+    var isLive: Bool { stream.isLive }
 
     @ObservationIgnored private let stream: ResolvedStream
     @ObservationIgnored private let factory: any PlayerItemBuilding
@@ -58,6 +65,14 @@ final class PlayerSession {
     @ObservationIgnored private var nowPlayingArtwork: MPMediaItemArtwork?
     @ObservationIgnored private var hasAttemptedResume = false
     @ObservationIgnored private var lastProgressSaveDate: Date?
+    @ObservationIgnored private var hasStarted = false
+    @ObservationIgnored private var timeControlObservation: NSKeyValueObservation?
+    @ObservationIgnored private var lifecycleObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private weak var videoSurface: AVPlayerViewController?
+    @ObservationIgnored private var isInBackground = false
+    @ObservationIgnored private var wasPlayingOnResignActive = false
+    /// While set, any pause that isn't user-initiated is undone — see `keepPlayingThroughTransition()`.
+    @ObservationIgnored private var keepPlayingUntil: Date?
 
     init(
         stream: ResolvedStream,
@@ -74,7 +89,11 @@ final class PlayerSession {
         observe(initial.item)
     }
 
+    /// Idempotent: the session is owned by `PlaybackCoordinator` and outlives the fullscreen
+    /// player, which may be dismissed into the Now Playing bar and re-expanded many times.
     func start() {
+        guard !hasStarted else { return }
+        hasStarted = true
         do {
             let audio = AVAudioSession.sharedInstance()
             try audio.setCategory(.playback, mode: .moviePlayback)
@@ -85,6 +104,8 @@ final class PlayerSession {
             return
         }
         player.play()
+        observeTimeControlStatus()
+        observeLifecycle()
         loadSubtitlesIfNeeded()
         addTimeObserverIfNeeded()
         configureNowPlaying()
@@ -102,6 +123,14 @@ final class PlayerSession {
         }
         statusObservation?.invalidate()
         statusObservation = nil
+        timeControlObservation?.invalidate()
+        timeControlObservation = nil
+        lifecycleObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        lifecycleObservers = []
+        keepPlayingUntil = nil
+        videoSurface?.player = nil
+        videoSurface = nil
+        isPlaying = false
         player.pause()
         player.replaceCurrentItem(with: nil)
         try? AVAudioSession.sharedInstance().setActive(
@@ -109,6 +138,51 @@ final class PlayerSession {
             options: .notifyOthersOnDeactivation
         )
         clearNowPlaying()
+    }
+
+    func play() {
+        player.play()
+    }
+
+    func pause() {
+        keepPlayingUntil = nil
+        player.pause()
+    }
+
+    func togglePlayPause() {
+        if isPlaying {
+            pause()
+        } else {
+            play()
+        }
+    }
+
+    /// AVKit may pause the player as its view controller leaves the hierarchy (dismissing into
+    /// the Now Playing bar) or as the app is backgrounded with it still attached. For a short
+    /// window afterwards, any pause that didn't come through `pause()` is treated as one of
+    /// those system pauses and undone.
+    func keepPlayingThroughTransition() {
+        guard isPlaying else { return }
+        keepPlayingUntil = .now.addingTimeInterval(1.5)
+    }
+
+    /// Registers the fullscreen `AVPlayerViewController` showing this session's video. The
+    /// session hands it the player itself (rather than the view setting it directly) so it can
+    /// detach it while backgrounded — iOS pauses any player still attached to a visible video
+    /// layer when the app leaves the foreground, which would stop background audio playback.
+    func attachVideoSurface(_ controller: AVPlayerViewController) {
+        videoSurface = controller
+        let desired: AVPlayer? = isInBackground ? nil : player
+        if controller.player !== desired {
+            controller.player = desired
+        }
+    }
+
+    func detachVideoSurface(_ controller: AVPlayerViewController) {
+        controller.player = nil
+        if videoSurface === controller {
+            videoSurface = nil
+        }
     }
 
     func toggleSubtitles() {
@@ -140,6 +214,7 @@ final class PlayerSession {
             let seconds = time.seconds
             Task { @MainActor [weak self] in
                 self?.updateSubtitleText(at: seconds)
+                self?.updateProgress(at: seconds)
                 self?.updateNowPlayingPlaybackInfo()
                 self?.saveProgressIfDue(at: seconds)
             }
@@ -155,6 +230,113 @@ final class PlayerSession {
         if subtitleText != active?.text {
             subtitleText = active?.text
         }
+    }
+
+    private func updateProgress(at seconds: Double) {
+        guard !stream.isLive, seconds.isFinite,
+              let duration = player.currentItem?.duration.seconds,
+              duration.isFinite, duration > 0 else { return }
+        let fraction = min(max(seconds / duration, 0), 1)
+        if abs(fraction - (progress ?? -1)) >= 0.002 {
+            progress = fraction
+        }
+    }
+
+    private func observeTimeControlStatus() {
+        timeControlObservation?.invalidate()
+        timeControlObservation = player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] player, _ in
+            let status = player.timeControlStatus
+            Task { @MainActor [weak self] in
+                self?.handleTimeControlStatus(status)
+            }
+        }
+    }
+
+    private func handleTimeControlStatus(_ status: AVPlayer.TimeControlStatus) {
+        let playing = status != .paused
+        if let until = keepPlayingUntil {
+            if Date.now >= until {
+                keepPlayingUntil = nil
+            } else if !playing, failure == nil {
+                player.play()
+                return
+            }
+        }
+        if isPlaying != playing {
+            isPlaying = playing
+        }
+        updateNowPlayingPlaybackInfo()
+    }
+
+    /// The observers are delivered on the main queue, hence `assumeIsolated` — the background
+    /// detach has to happen synchronously as the app leaves the foreground, not on a later hop.
+    private func observeLifecycle() {
+        let center = NotificationCenter.default
+        lifecycleObservers = [
+            center.addObserver(
+                forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.recordPlaybackStateOnResignActive() }
+            },
+            center.addObserver(
+                forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.enterBackground() }
+            },
+            center.addObserver(
+                forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.enterForeground() }
+            },
+            center.addObserver(
+                forName: AVAudioSession.interruptionNotification,
+                object: AVAudioSession.sharedInstance(),
+                queue: .main
+            ) { [weak self] notification in
+                let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+                let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                MainActor.assumeIsolated {
+                    self?.handleInterruption(
+                        type: rawType.flatMap(AVAudioSession.InterruptionType.init(rawValue:)),
+                        options: AVAudioSession.InterruptionOptions(rawValue: rawOptions)
+                    )
+                }
+            }
+        ]
+    }
+
+    /// Captured before backgrounding, since locking the screen can pause an attached video
+    /// player before `didEnterBackground` arrives.
+    private func recordPlaybackStateOnResignActive() {
+        wasPlayingOnResignActive = isPlaying
+    }
+
+    private func enterBackground() {
+        isInBackground = true
+        guard let videoSurface else { return }
+        let shouldResume = wasPlayingOnResignActive || isPlaying
+        videoSurface.player = nil
+        guard shouldResume, failure == nil else { return }
+        keepPlayingUntil = .now.addingTimeInterval(1.5)
+        player.play()
+    }
+
+    private func enterForeground() {
+        isInBackground = false
+        if let videoSurface, videoSurface.player !== player {
+            videoSurface.player = player
+        }
+    }
+
+    /// Phone calls, Siri, alarms etc. pause playback; resume afterwards when iOS says it's
+    /// appropriate, so background playback doesn't silently end after an interruption.
+    private func handleInterruption(
+        type: AVAudioSession.InterruptionType?,
+        options: AVAudioSession.InterruptionOptions
+    ) {
+        guard type == .ended, options.contains(.shouldResume), failure == nil else { return }
+        try? AVAudioSession.sharedInstance().setActive(true)
+        player.play()
     }
 
     /// Drives Control Center / Lock Screen "Now Playing" — AVKit's own automatic mode
@@ -179,6 +361,7 @@ final class PlayerSession {
             let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
             await MainActor.run {
                 self?.nowPlayingArtwork = artwork
+                self?.artworkImage = image
                 self?.updateNowPlayingInfo()
             }
         }
@@ -197,22 +380,18 @@ final class PlayerSession {
 
         commandCenter.playCommand.isEnabled = true
         commandCenter.playCommand.addTarget { [weak self] _ in
-            self?.player.play()
+            self?.play()
             return .success
         }
         commandCenter.pauseCommand.isEnabled = true
         commandCenter.pauseCommand.addTarget { [weak self] _ in
-            self?.player.pause()
+            self?.pause()
             return .success
         }
         commandCenter.togglePlayPauseCommand.isEnabled = true
         commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
             guard let self else { return .commandFailed }
-            if player.timeControlStatus == .playing {
-                player.pause()
-            } else {
-                player.play()
-            }
+            togglePlayPause()
             return .success
         }
     }

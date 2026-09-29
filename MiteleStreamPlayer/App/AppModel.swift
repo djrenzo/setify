@@ -56,7 +56,12 @@ final class AppModel {
             atres: AtresSearchService(client: client)
         )
         let searchStore = SearchStore(service: searchService)
-        let playback = PlaybackCoordinator(resolver: resolver, identityService: identity)
+        let watchProgress = WatchProgressStore(repository: JSONWatchProgressRepository())
+        let playback = PlaybackCoordinator(
+            resolver: resolver,
+            identityService: identity,
+            progressStore: watchProgress
+        )
         return AppModel(
             channels: channelStore,
             search: searchStore,
@@ -66,7 +71,7 @@ final class AppModel {
             atresVault: atresVault,
             catalog: CatalogEnvironment.live(client: client),
             favorites: FavoritesStore(repository: JSONFavoritesRepository()),
-            watchProgress: WatchProgressStore(repository: JSONWatchProgressRepository()),
+            watchProgress: watchProgress,
             downloads: DownloadStore(repository: JSONDownloadsRepository(), resolver: resolver)
         )
     }

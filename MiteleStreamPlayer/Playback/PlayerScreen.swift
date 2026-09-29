@@ -3,36 +3,42 @@ import SwiftUI
 
 @MainActor
 struct PlayerScreen: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var session: PlayerSession
+    /// Owned by `PlaybackCoordinator`, which starts/stops it — this screen is only one of its
+    /// views, alongside the Now Playing bar, so dismissing it doesn't end playback.
+    let session: PlayerSession
+    let onMinimize: () -> Void
+    let onClose: () -> Void
+
     @State private var isLandscape = true
     @State private var showsOverlay = true
     @State private var hideTask: Task<Void, Never>?
-
-    init(stream: ResolvedStream, progressStore: WatchProgressStore) {
-        _session = State(initialValue: PlayerSession(stream: stream, progressStore: progressStore))
-    }
+    @State private var dragOffset: CGFloat = 0
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            PlayerControllerView(player: session.player, onTap: toggleOverlay)
-                .ignoresSafeArea()
+            PlayerControllerView(
+                session: session,
+                onTap: toggleOverlay,
+                onDragChanged: dragChanged,
+                onDragEnded: dragEnded
+            )
+            .ignoresSafeArea()
             statusOverlay
             subtitleOverlay
             if showsOverlay {
                 topBar.transition(.opacity)
             }
         }
+        .offset(y: dragOffset)
         .animation(.easeInOut(duration: 0.2), value: showsOverlay)
+        .presentationBackground(.clear)
         .statusBarHidden()
         .onAppear {
-            session.start()
-            OrientationController.apply(.landscape)
+            OrientationController.apply(isLandscape ? .landscape : .portrait)
             scheduleOverlayHide()
         }
         .onDisappear {
-            session.stop()
             hideTask?.cancel()
             OrientationController.apply(.allButUpsideDown)
         }
@@ -77,6 +83,13 @@ struct PlayerScreen: View {
     private var topBar: some View {
         VStack {
             HStack {
+                Button(action: onMinimize) {
+                    Image(systemName: "chevron.down")
+                        .font(.headline)
+                        .frame(width: 42, height: 42)
+                        .background(.black.opacity(0.55), in: .circle)
+                }
+                .accessibilityLabel("Minimizar reproductor")
                 Spacer()
                 Text(session.title)
                     .font(.subheadline.weight(.semibold))
@@ -112,8 +125,23 @@ struct PlayerScreen: View {
     }
 
     private func close() {
-        session.stop()
-        dismiss()
+        onClose()
+    }
+
+    private func dragChanged(_ translation: CGFloat) {
+        dragOffset = max(translation, 0)
+    }
+
+    /// Swiping down far or fast enough minimizes into the Now Playing bar; otherwise the player
+    /// springs back into place.
+    private func dragEnded(_ translation: CGFloat, _ velocity: CGFloat) {
+        if translation > 140 || velocity > 900 {
+            onMinimize()
+        } else {
+            withAnimation(.spring(duration: 0.3)) {
+                dragOffset = 0
+            }
+        }
     }
 
     private func toggleOrientation() {
@@ -167,16 +195,18 @@ private struct PlayerFailureView: View {
 }
 
 private struct PlayerControllerView: UIViewControllerRepresentable {
-    let player: AVPlayer
+    let session: PlayerSession
     let onTap: () -> Void
+    let onDragChanged: (CGFloat) -> Void
+    let onDragEnded: (CGFloat, CGFloat) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onTap: onTap)
+        Coordinator(session: session, onTap: onTap, onDragChanged: onDragChanged, onDragEnded: onDragEnded)
     }
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
-        controller.player = player
+        session.attachVideoSurface(controller)
         controller.showsPlaybackControls = true
         controller.videoGravity = .resizeAspect
         controller.allowsPictureInPicturePlayback = false
@@ -190,23 +220,72 @@ private struct PlayerControllerView: UIViewControllerRepresentable {
         tap.cancelsTouchesInView = false
         controller.view.addGestureRecognizer(tap)
 
+        // Swipe down to minimize into the Now Playing bar. Only begins on a predominantly
+        // downward drag (see `gestureRecognizerShouldBegin`), so AVKit's horizontal scrubbing
+        // and other controls are unaffected.
+        let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
+        pan.delegate = context.coordinator
+        pan.cancelsTouchesInView = false
+        controller.view.addGestureRecognizer(pan)
+
         return controller
     }
 
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
-        controller.player = player
+        if context.coordinator.session !== session {
+            context.coordinator.session.detachVideoSurface(controller)
+            context.coordinator.session = session
+        }
+        session.attachVideoSurface(controller)
         context.coordinator.onTap = onTap
+        context.coordinator.onDragChanged = onDragChanged
+        context.coordinator.onDragEnded = onDragEnded
+    }
+
+    static func dismantleUIViewController(_ controller: AVPlayerViewController, coordinator: Coordinator) {
+        coordinator.session.detachVideoSurface(controller)
     }
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var session: PlayerSession
         var onTap: () -> Void
+        var onDragChanged: (CGFloat) -> Void
+        var onDragEnded: (CGFloat, CGFloat) -> Void
 
-        init(onTap: @escaping () -> Void) {
+        init(
+            session: PlayerSession,
+            onTap: @escaping () -> Void,
+            onDragChanged: @escaping (CGFloat) -> Void,
+            onDragEnded: @escaping (CGFloat, CGFloat) -> Void
+        ) {
+            self.session = session
             self.onTap = onTap
+            self.onDragChanged = onDragChanged
+            self.onDragEnded = onDragEnded
         }
 
         @objc func handleTap() {
             onTap()
+        }
+
+        @objc func handlePan(_ pan: UIPanGestureRecognizer) {
+            let translation = pan.translation(in: pan.view).y
+            switch pan.state {
+            case .changed:
+                onDragChanged(translation)
+            case .ended:
+                onDragEnded(translation, pan.velocity(in: pan.view).y)
+            case .cancelled, .failed:
+                onDragEnded(0, 0)
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
+            let velocity = pan.velocity(in: pan.view)
+            return velocity.y > 0 && abs(velocity.y) > abs(velocity.x) * 1.5
         }
 
         func gestureRecognizer(

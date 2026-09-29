@@ -46,6 +46,7 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         LSRequiresIPhoneOS: true
         UIApplicationSupportsIndirectInputEvents: true
+        UIBackgroundModes: [audio]
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64]
         UISupportedInterfaceOrientations:
