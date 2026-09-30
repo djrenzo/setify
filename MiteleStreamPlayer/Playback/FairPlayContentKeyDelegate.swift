@@ -159,7 +159,8 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
-        fpTrace("POST license (releasePid=\(drm.releasePid), token \(drm.token.isEmpty ? "empty" : "\(drm.token.count) chars))")
+        let tokenDesc = drm.token.isEmpty ? "empty" : "\(drm.token.count) chars"
+        fpTrace("POST license (releasePid=\(drm.releasePid), token \(tokenDesc))")
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
         let bodyText = String(data: data.prefix(600), encoding: .utf8) ?? "<\(data.count) bytes non-utf8>"
