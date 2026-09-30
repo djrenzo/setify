@@ -117,13 +117,13 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
                 return
             }
             fpTrace("SPC generated, \(spcData.count) bytes")
-            Task { await self.requestKey(spc: spcData, keyRequest: request) }
+            Task { await self.requestKey(spc: spcData, releasePid: contentID, keyRequest: request) }
         }
     }
 
-    private func requestKey(spc: Data, keyRequest: AVContentKeyRequest) async {
+    private func requestKey(spc: Data, releasePid: String, keyRequest: AVContentKeyRequest) async {
         do {
-            let ckc = try await fetchCKC(spc: spc)
+            let ckc = try await fetchCKC(spc: spc, releasePid: releasePid)
             fpTrace("CKC decoded, \(ckc.count) bytes — handing key to player ✅")
             let response = AVContentKeyResponse(fairPlayStreamingKeyResponseData: ckc)
             keyRequest.processContentKeyResponse(response)
@@ -136,7 +136,7 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
     /// theplatform's key server (`fpls/web/FairPlay?form=json`) takes the SPC in a JSON envelope
     /// `{"getFairplayLicense":{"releasePid":…,"spcMessage":…}}` with a non-empty `token=` query
     /// param, and answers `{"getFairplayLicenseResponse":{"ckcMessage":<base64>}}`.
-    private func fetchCKC(spc: Data) async throws -> Data {
+    private func fetchCKC(spc: Data, releasePid: String) async throws -> Data {
         guard var components = URLComponents(url: drm.licenseURL, resolvingAgainstBaseURL: false) else {
             throw FairPlayError.licenseServer(-1)
         }
@@ -153,14 +153,14 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let payload: [String: Any] = [
             "getFairplayLicense": [
-                "releasePid": drm.releasePid,
+                "releasePid": releasePid,
                 "spcMessage": spc.base64EncodedString()
             ]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
         let tokenDesc = drm.token.isEmpty ? "empty" : "\(drm.token.count) chars"
-        fpTrace("POST license (releasePid=\(drm.releasePid), token \(tokenDesc))")
+        fpTrace("POST license (releasePid=\(releasePid), token \(tokenDesc))")
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
         let bodyText = String(data: data.prefix(600), encoding: .utf8) ?? "<\(data.count) bytes non-utf8>"

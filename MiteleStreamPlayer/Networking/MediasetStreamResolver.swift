@@ -329,7 +329,7 @@ actor MediasetStreamResolver: StreamResolving {
         drmToken: String
     ) throws -> SignedStream {
         guard let url = tokenizedURL(stream: stream, token: token),
-              let drm = caronte.fairPlayDRM(streamURL: stream, token: drmToken) else {
+              let drm = caronte.fairPlayDRM(token: drmToken) else {
             // Encrypted stream with no usable DRM parameters — nothing playable to offer.
             throw PlaybackFailure.unavailableClearStream
         }
@@ -478,26 +478,20 @@ private struct CaronteResponse: Decodable, Sendable {
     }
 
     /// Builds the FairPlay parameters for a DRM-protected stream from the caronte `drm.fairplay`
-    /// block. theplatform wants `releasePid` in the request body (not the query) and a non-empty
-    /// `token`, both supplied here; the delegate assembles the final request.
-    ///
-    /// - Note: the caronte/mab delivery flow this app uses (unlike the official web player's
-    ///   theplatform SMIL flow) never surfaces theplatform's release `pid`. The best per-media
-    ///   identifier available here is the packager asset GUID embedded in the stream path, which
-    ///   is used as the releasePid. theplatform accepts its format; if it turns out to be the
-    ///   wrong release, this is the single place to revise.
-    func fairPlayDRM(streamURL: String, token: String) -> FairPlayDRM? {
+    /// block. `releasePid` isn't set here — theplatform requires it to equal the assetId embedded
+    /// in the SPC (the `skd://` content id), which is only known once the key request arrives, so
+    /// the delegate fills it in.
+    func fairPlayDRM(token: String) -> FairPlayDRM? {
         guard let fairplay = resolvedFairPlay,
               let curl = fairplay.curl?.trimmedNonEmpty,
               let certificateURL = URL(string: curl), certificateURL.scheme == "https",
               let lurl = fairplay.lurl?.trimmedNonEmpty else {
             return nil
         }
-        let pid = Self.assetGUID(from: streamURL) ?? ""
-        // The `{pid}`/`{beToken}` placeholders in the query are harmless once emptied — theplatform
-        // reads releasePid from the body and the token from the `token=` param the delegate adds.
+        // Empty the query placeholders — theplatform reads releasePid from the body and the token
+        // from the `token=` param the delegate adds.
         let base = lurl
-            .replacingOccurrences(of: "{pid}", with: pid)
+            .replacingOccurrences(of: "{pid}", with: "")
             .replacingOccurrences(of: "{beToken}", with: "")
         guard let licenseURL = URL(string: base), licenseURL.scheme == "https" else {
             return nil
@@ -505,18 +499,9 @@ private struct CaronteResponse: Decodable, Sendable {
         return FairPlayDRM(
             certificateURL: certificateURL,
             licenseURL: licenseURL,
-            releasePid: pid,
             token: token,
             licenseHeaders: APIConfiguration.deliveryHeaders
         )
-    }
-
-    /// Extracts the packager asset UUID from a stream path such as
-    /// `…/bitmovin/d6/92/d6925c79-1602-4efd-bb82-6c3deb92aa9f/hls-fairplay.ism/…`.
-    private static func assetGUID(from streamURL: String) -> String? {
-        let pattern = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
-        guard let range = streamURL.range(of: pattern, options: .regularExpression) else { return nil }
-        return String(streamURL[range])
     }
 }
 
