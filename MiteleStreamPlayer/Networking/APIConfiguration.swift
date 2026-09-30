@@ -43,6 +43,14 @@ enum APIConfiguration {
         "Origin": "https://www.rtve.es"
     ]
 
+    /// Headers for Mediaset's OTT service layer (IDM anonymous login, `playback/v3.0/check`, and
+    /// the SMIL media selector it returns) — the FairPlay/Widevine entitlement chain.
+    static let ottHeaders = [
+        "User-Agent": chromeUserAgent,
+        "Origin": "https://www.mediasetinfinity.es",
+        "Referer": "https://www.mediasetinfinity.es/"
+    ]
+
     static func sessionHeaders(gmid: String) -> [String: String] {
         [
             "Cookie": gmid,
@@ -64,14 +72,22 @@ enum APIURL {
     static let gigyaAccount = URL(string: "https://login.mitele.es/accounts.getAccountInfo")!
     static let mab = URL(string: "https://mab.mediaset.es/1.0.0/get")!
     static let cerbero = URL(string: "https://cerbero.mediaset.es/")!
-    /// Gigya JWT for the current session — exchanged at Mediaset's IDM for a content-authorization
-    /// token. Same host/APIKey as `gigyaAccount`.
-    static let gigyaJWT = URL(string: "https://login.mitele.es/accounts.getJWT")!
-    /// Mediaset's IDM account login (AWS-fronted): `{gt, client_id, appName}` → `{caToken}`, the
-    /// entitled token the FairPlay license request needs. Base + appName come from the web player's
-    /// Firebase remote config (project `rtispa-ott-esp`, `rtiLabLoginKit`).
-    static let idmAccountLogin = URL(string: "https://services-ott-prod-fe.mediaset.net/esp/idm/v3.0/account/login")!
-    static let mediasetAppName = "web//mediasetplay-web/1.5.1-e5947e0"
+    /// Mediaset's OTT service layer base (AWS-fronted), shared by the entitlement chain below.
+    private static let ottServiceLayer = "https://services-ott-prod-fe.mediaset.net/esp/"
+    /// IDM anonymous login: `{client_id, appName}` → `{sid, beToken}`. This `beToken` is what both
+    /// `playback/v3.0/check` and the FairPlay/Widevine license request authenticate with — the
+    /// catalog's entitlement is evaluated per-content by `playback/check`, not per-account, so no
+    /// user session is involved here.
+    static let idmAnonymousLogin = URL(string: ottServiceLayer + "idm/v3.0/anonymous/login")!
+    /// `{contentId, streamType, delivery}` (Bearer `beToken`, `sid` as query param) → a SMIL media
+    /// selector URL plus passthrough params. Fetching that selector (Basic `:beToken` auth) returns
+    /// a SMIL document whose `trackingData` param carries the real theplatform `pid`/`aid` for this
+    /// asset — the identifiers the FairPlay/Widevine license request actually needs.
+    static let playbackCheck = URL(string: ottServiceLayer + "playback/v3.0/check")!
+    static let mediasetInfinityAppName = "web//mediasetinfinity-web"
+    /// theplatform's FairPlay key server. Account is per-asset (`aid` from `trackingData`), so it's
+    /// supplied at the call site rather than baked in here.
+    static let fairPlayLicenseBase = URL(string: "https://fairplay.entitlement.theplatform.eu/fpls/web/FairPlay")!
 
     static func mabURL(oid: String, eid: String) throws -> URL {
         guard var components = URLComponents(url: mab, resolvingAgainstBaseURL: false) else {

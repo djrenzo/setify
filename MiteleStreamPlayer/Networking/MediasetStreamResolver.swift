@@ -12,9 +12,9 @@ actor MediasetStreamResolver: StreamResolving {
     private let credentials: any CredentialProviding
     private let identityService: GigyaIdentityService
     private let atresPlayer: any AtresPlayerFetching
-    /// Cached theplatform content-authorization token (`caToken`) for FairPlay licensing, with its
-    /// JWT expiry.
-    private var cachedToken: (value: String, expiry: Date)?
+    /// Cached anonymous IDM login (`sid`+`beToken`) used by the FairPlay/Widevine entitlement
+    /// chain — reused across plays within its JWT lifetime; no user session involved.
+    private var cachedAnonymousLogin: (sid: String, beToken: String, expiry: Date)?
 
     init(
         client: HTTPClient,
@@ -163,7 +163,9 @@ actor MediasetStreamResolver: StreamResolving {
         async let gbx = fetchGBX(url: gbxURL, headers: headers)
         let delivery = try await (caronte, gbx)
         await progress(.authorizing)
-        let signed = try await signedURL(caronte: delivery.0, gbx: delivery.1)
+        // Live channels have no episode page to resolve a finder guid from, so they can never take
+        // the FairPlay path — `fairPlayStream` throws `unavailableClearStream` if ever reached.
+        let signed = try await signedURL(caronte: delivery.0, gbx: delivery.1, pageURL: nil)
         await progress(.loadingPlayer)
         return ResolvedStream(
             title: channel.name,
@@ -218,7 +220,7 @@ actor MediasetStreamResolver: StreamResolving {
         )
         let delivery = try await (caronte, gbx)
         await progress(.authorizing)
-        let signed = try await signedURL(caronte: delivery.0, gbx: delivery.1)
+        let signed = try await signedURL(caronte: delivery.0, gbx: delivery.1, pageURL: card.pageURL)
         await progress(.loadingPlayer)
         return ResolvedStream(
             title: card.title,
@@ -249,7 +251,7 @@ actor MediasetStreamResolver: StreamResolving {
         let drm: FairPlayDRM?
     }
 
-    private func signedURL(caronte: CaronteResponse, gbx: String) async throws -> SignedStream {
+    private func signedURL(caronte: CaronteResponse, gbx: String, pageURL: URL?) async throws -> SignedStream {
         guard let stream = caronte.stream?.trimmedNonEmpty,
               let bbx = caronte.resolvedBBX?.trimmedNonEmpty else {
             throw PlaybackFailure.apiChanged
@@ -274,7 +276,7 @@ actor MediasetStreamResolver: StreamResolving {
             if response.errorCode != nil { throw PlaybackFailure.sessionExpired }
             throw PlaybackFailure.apiChanged
         }
-        return try await manifest(stream: stream, token: token, caronte: caronte)
+        return try await manifest(stream: stream, token: token, caronte: caronte, pageURL: pageURL)
     }
 
     /// Chooses between the clear and FairPlay variants of a signed stream.
@@ -286,7 +288,8 @@ actor MediasetStreamResolver: StreamResolving {
     private func manifest(
         stream: String,
         token: String,
-        caronte: CaronteResponse
+        caronte: CaronteResponse,
+        pageURL: URL?
     ) async throws -> SignedStream {
         let cleanToken = String(token.drop(while: { $0 == "?" || $0 == "&" }))
         let lowercased = stream.lowercased()
@@ -301,11 +304,11 @@ actor MediasetStreamResolver: StreamResolving {
                await clearVariantIsPlayable(clearURL) {
                 return SignedStream(url: clearURL, drm: nil)
             }
-            return try await fairPlayStream(stream: stream, token: cleanToken, caronte: caronte)
+            return try await fairPlayStream(stream: stream, token: cleanToken, caronte: caronte, pageURL: pageURL)
         }
 
         if lowercased.contains("fairplay") {
-            return try await fairPlayStream(stream: stream, token: cleanToken, caronte: caronte)
+            return try await fairPlayStream(stream: stream, token: cleanToken, caronte: caronte, pageURL: pageURL)
         }
 
         guard let url = tokenizedURL(stream: stream, token: cleanToken) else {
@@ -317,85 +320,235 @@ actor MediasetStreamResolver: StreamResolving {
     private func fairPlayStream(
         stream: String,
         token: String,
-        caronte: CaronteResponse
+        caronte: CaronteResponse,
+        pageURL: URL?
     ) async throws -> SignedStream {
-        // The theplatform content-authorization token is only needed on this DRM path, so it's
-        // fetched here rather than for every clear stream.
-        let caToken = (try? await theplatformToken()) ?? ""
-        guard let url = tokenizedURL(stream: stream, token: token),
-              let drm = caronte.fairPlayDRM(token: caToken) else {
-            // Encrypted stream with no usable DRM parameters — nothing playable to offer.
+        guard let certURLString = caronte.resolvedFairPlay?.curl?.trimmedNonEmpty,
+              let certificateURL = URL(string: certURLString), certificateURL.scheme == "https",
+              let url = tokenizedURL(stream: stream, token: token) else {
             throw PlaybackFailure.unavailableClearStream
         }
+        // Entitlement (and the real theplatform pid/account the license needs) is resolved via
+        // Mediaset's `playback/check` + SMIL selector chain — see `fairPlaySelector`.
+        let selector = try await fairPlaySelector(pageURL: pageURL)
+        guard let licenseURL = Self.fairPlayLicenseURL(account: selector.aid) else {
+            throw PlaybackFailure.unavailableClearStream
+        }
+        let drm = FairPlayDRM(
+            certificateURL: certificateURL,
+            licenseURL: licenseURL,
+            releasePid: selector.pid,
+            token: selector.beToken,
+            licenseHeaders: APIConfiguration.deliveryHeaders
+        )
         return SignedStream(url: url, drm: drm)
     }
 
-    /// Fetches (and caches) the theplatform content-authorization token (`caToken`) the FairPlay
-    /// license request needs. The catalog is entitlement-gated, so an anonymous token is rejected
-    /// ("user is not entitled"); this exchanges the current Gigya session for an account token:
-    /// Gigya `getJWT` → IDM `account/login` → `caToken`.
-    private func theplatformToken() async throws -> String {
-        if let cached = cachedToken, cached.expiry > Date.now.addingTimeInterval(60) {
-            return cached.value
-        }
-        guard let creds = try await credentials.credentials(), creds.isValid else {
-            throw PlaybackFailure.missingCredentials
-        }
-        let (apiKey, loginToken) = try Self.gigyaParameters(from: creds.cookie)
-        let jwt = try await gigyaJWT(apiKey: apiKey, loginToken: loginToken, gmid: creds.gmid)
-        let caToken = try await accountLogin(gt: jwt)
-        cachedToken = (caToken, Self.jwtExpiry(caToken) ?? Date.now.addingTimeInterval(3600))
-        return caToken
+    // MARK: - FairPlay/Widevine entitlement chain
+    //
+    // Mirrors the flow a working Kodi addon uses for this same catalog's Widevine licensing:
+    //   1. anonymous IDM login → {sid, beToken} (no user account involved — entitlement here is
+    //      per-content via `playback/check`, not per-subscriber)
+    //   2. scrape the episode page for its M-prefixed theplatform "finder" guid
+    //   3. POST playback/v3.0/check(contentId: guid) → a SMIL media-selector URL + passthrough params
+    //   4. GET that SMIL selector → its `trackingData` param carries `pid` (the release pid) and
+    //      `aid` (the account id), the two identifiers theplatform's license servers actually check
+    // `pid` doubles as the FairPlay SPC's content identifier; `beToken` is the license `token=`.
+
+    private struct FairPlaySelector {
+        let pid: String
+        let aid: String
+        let beToken: String
     }
 
-    /// Signs the current session into a short-lived Gigya JWT, used as the `gt` for IDM login.
-    private func gigyaJWT(apiKey: String, loginToken: String, gmid: String) async throws -> String {
-        guard var components = URLComponents(url: APIURL.gigyaJWT, resolvingAgainstBaseURL: false) else {
-            throw PlaybackFailure.invalidURL
+    private func fairPlaySelector(pageURL: URL?) async throws -> FairPlaySelector {
+        guard let pageURL else {
+            // No episode page to resolve a finder guid from (e.g. a live channel).
+            throw PlaybackFailure.unavailableClearStream
         }
-        components.queryItems = [
-            URLQueryItem(name: "APIKey", value: apiKey),
-            URLQueryItem(name: "login_token", value: loginToken),
-            URLQueryItem(name: "format", value: "json")
-        ]
-        guard let url = components.url else { throw PlaybackFailure.invalidURL }
-        let endpoint = Endpoint(url: url, headers: APIConfiguration.sessionHeaders(gmid: gmid))
-        let response = try await client.decode(GigyaJWTResponse.self, from: endpoint)
-        guard response.errorCode == nil || response.errorCode == 0,
-              let jwt = response.id_token?.trimmedNonEmpty else {
-            throw PlaybackFailure.sessionExpired
+        let guid = try await programGUID(pageURL: pageURL)
+        let login = try await anonymousLogin()
+        let selector = try await playbackCheck(contentID: guid, sid: login.sid, beToken: login.beToken)
+        let smil = try await fetchSMIL(
+            selectorURL: selector.url,
+            passthrough: selector.passthrough,
+            beToken: login.beToken
+        )
+        guard let tracking = Self.trackingData(from: smil),
+              let pid = tracking["pid"]?.trimmedNonEmpty,
+              let aid = tracking["aid"]?.trimmedNonEmpty else {
+            throw PlaybackFailure.apiChanged
         }
-        return jwt
+        return FairPlaySelector(pid: pid, aid: aid, beToken: login.beToken)
     }
 
-    /// Exchanges a Gigya JWT for a Mediaset account `caToken` at IDM.
-    private func accountLogin(gt: String) async throws -> String {
+    /// Fetches (and caches) an anonymous IDM login. No user credentials are involved — Mediaset's
+    /// entitlement for this catalog is evaluated per-content by `playback/check`, not per-account.
+    private func anonymousLogin() async throws -> (sid: String, beToken: String) {
+        if let cached = cachedAnonymousLogin, cached.expiry > Date.now.addingTimeInterval(60) {
+            return (cached.sid, cached.beToken)
+        }
         let body = try JSONEncoder().encode(
-            AccountLoginRequest(gt: gt, client_id: "default", appName: APIURL.mediasetAppName)
+            AnonymousLoginRequest(client_id: UUID().uuidString.lowercased(), appName: APIURL.mediasetInfinityAppName)
         )
         let endpoint = Endpoint(
-            url: APIURL.idmAccountLogin,
+            url: APIURL.idmAnonymousLogin,
             method: "POST",
             headers: ["Content-Type": "application/json", "Accept": "application/json"],
             body: body
         )
-        let response = try await client.decode(AccountLoginResponse.self, from: endpoint)
-        guard let caToken = response.response?.caToken?.trimmedNonEmpty else {
-            throw PlaybackFailure.sessionExpired
+        let response = try await client.decode(AnonymousLoginResponse.self, from: endpoint)
+        guard let sid = response.response?.sid?.trimmedNonEmpty,
+              let beToken = response.response?.beToken?.trimmedNonEmpty else {
+            throw PlaybackFailure.apiChanged
         }
-        return caToken
+        cachedAnonymousLogin = (sid, beToken, Self.jwtExpiry(beToken) ?? Date.now.addingTimeInterval(3600))
+        return (sid, beToken)
     }
 
-    /// Pulls `APIKey` and `login_token` out of the stored Gigya cookie string.
-    private static func gigyaParameters(from cookie: String) throws -> (apiKey: String, loginToken: String) {
-        var components = URLComponents()
-        components.percentEncodedQuery = cookie.split(separator: "?", maxSplits: 1).last.map(String.init) ?? cookie
-        let items = components.queryItems ?? []
-        guard let apiKey = items.first(where: { $0.name == "APIKey" })?.value?.trimmedNonEmpty,
-              let loginToken = items.first(where: { $0.name == "login_token" })?.value?.trimmedNonEmpty else {
-            throw PlaybackFailure.sessionExpired
+    /// Scrapes the episode's `mediasetinfinity.es` page for its embedded finder guid
+    /// (`link-ott-prod.mediaset.net/finder/esp/{guid}`) — the `contentId` `playback/check` expects.
+    private func programGUID(pageURL: URL) async throws -> String {
+        let url = try infinityProgrammeURL(pageURL)
+        let data = try await client.data(for: Endpoint(url: url, headers: APIConfiguration.scrapeHeaders, timeout: 20))
+        guard let html = String(data: data, encoding: .utf8) else { throw PlaybackFailure.apiChanged }
+        let range = NSRange(html.startIndex..., in: html)
+        guard let match = Self.finderGUIDRegex.firstMatch(in: html, range: range),
+              let guidRange = Range(match.range(at: 1), in: html) else {
+            throw PlaybackFailure.apiChanged
         }
-        return (apiKey, loginToken)
+        return String(html[guidRange])
+    }
+
+    private func playbackCheck(
+        contentID: String,
+        sid: String,
+        beToken: String
+    ) async throws -> (url: URL, passthrough: [String: String]) {
+        guard var components = URLComponents(url: APIURL.playbackCheck, resolvingAgainstBaseURL: false) else {
+            throw PlaybackFailure.invalidURL
+        }
+        components.queryItems = [URLQueryItem(name: "sid", value: sid)]
+        guard let requestURL = components.url else { throw PlaybackFailure.invalidURL }
+
+        let body = try JSONSerialization.data(withJSONObject: [
+            "contentId": contentID,
+            "streamType": "VOD",
+            "delivery": "Streaming"
+        ])
+        var headers = APIConfiguration.ottHeaders
+        headers["Authorization"] = "Bearer \(beToken)"
+        headers["Content-Type"] = "application/json"
+        let data = try await client.data(for: Endpoint(url: requestURL, method: "POST", headers: headers, body: body))
+
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let response = root["response"] as? [String: Any],
+              let selector = response["mediaSelector"] as? [String: Any],
+              let urlString = selector["url"] as? String,
+              let selectorURL = URL(string: urlString) else {
+            throw PlaybackFailure.apiChanged
+        }
+        var passthrough: [String: String] = [:]
+        for key in ["formats", "assetTypes", "tracking", "delivery", "publicUrl"] {
+            if let value = selector[key], let text = Self.stringify(value) {
+                passthrough[key] = text
+            }
+        }
+        return (selectorURL, passthrough)
+    }
+
+    private func fetchSMIL(selectorURL: URL, passthrough: [String: String], beToken: String) async throws -> String {
+        guard var components = URLComponents(url: selectorURL, resolvingAgainstBaseURL: false) else {
+            throw PlaybackFailure.invalidURL
+        }
+        var items = components.queryItems ?? []
+        items.append(contentsOf: [
+            URLQueryItem(name: "format", value: "SMIL"),
+            URLQueryItem(name: "auto", value: "true"),
+            URLQueryItem(name: "balance", value: "true")
+        ])
+        for (key, value) in passthrough {
+            items.append(URLQueryItem(name: key, value: value))
+        }
+        components.queryItems = items
+        guard let url = components.url else { throw PlaybackFailure.invalidURL }
+
+        var headers = APIConfiguration.ottHeaders
+        headers["Authorization"] = "Basic \(Data(":\(beToken)".utf8).base64EncodedString())"
+        let data = try await client.data(for: Endpoint(url: url, headers: headers))
+        guard let text = String(data: data, encoding: .utf8) else { throw PlaybackFailure.apiChanged }
+        return text
+    }
+
+    private func infinityProgrammeURL(_ url: URL) throws -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let host = components.host?.lowercased() else {
+            throw PlaybackFailure.invalidURL
+        }
+        if host.hasSuffix("mitele.es") {
+            let prefix = host.dropLast("mitele.es".count)
+            components.host = "\(prefix)mediasetinfinity.es"
+        }
+        guard let result = components.url else { throw PlaybackFailure.invalidURL }
+        return result
+    }
+
+    private static let finderGUIDRegex = try! NSRegularExpression(
+        pattern: #"link-ott-prod\.mediaset\.net/finder/esp/(\w+)"#
+    )
+
+    /// Finds the `<param name="trackingData" value="pid=…|aid=…|…">` inside a SMIL document and
+    /// parses its pipe-delimited `key=value` pairs (forgiving of malformed pairs, matching the
+    /// reference implementation this was ported from).
+    private static func trackingData(from smil: String) -> [String: String]? {
+        guard let paramTagRegex = try? NSRegularExpression(pattern: #"<param\b[^>]*>"#, options: [.caseInsensitive]) else {
+            return nil
+        }
+        let range = NSRange(smil.startIndex..., in: smil)
+        for match in paramTagRegex.matches(in: smil, range: range) {
+            guard let tagRange = Range(match.range, in: smil) else { continue }
+            let tag = String(smil[tagRange])
+            guard tag.range(of: #"name\s*=\s*"trackingData""#, options: .regularExpression) != nil,
+                  let valueRange = tag.range(of: #"value\s*=\s*"([^"]*)""#, options: .regularExpression) else {
+                continue
+            }
+            var value = String(tag[valueRange])
+            value = value.replacingOccurrences(of: #"^value\s*=\s*""#, with: "", options: .regularExpression)
+            if value.hasSuffix("\"") { value.removeLast() }
+            value = value.replacingOccurrences(of: "&amp;", with: "&")
+
+            var result: [String: String] = [:]
+            for pair in value.split(separator: "|") {
+                guard let eq = pair.firstIndex(of: "=") else { continue }
+                let key = String(pair[pair.startIndex..<eq])
+                let val = String(pair[pair.index(after: eq)...])
+                result[key] = val
+            }
+            if !result.isEmpty { return result }
+        }
+        return nil
+    }
+
+    private static func stringify(_ value: Any) -> String? {
+        switch value {
+        case let text as String: return text
+        case let number as NSNumber: return number.stringValue
+        case let array as [Any]: return array.compactMap { stringify($0) }.joined(separator: ",")
+        default: return nil
+        }
+    }
+
+    private static func fairPlayLicenseURL(account aid: String) -> URL? {
+        guard var components = URLComponents(url: APIURL.fairPlayLicenseBase, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        components.queryItems = [
+            URLQueryItem(name: "httpError", value: "true"),
+            URLQueryItem(name: "form", value: "json"),
+            URLQueryItem(name: "account", value: "http://access.auth.theplatform.com/data/Account/\(aid)"),
+            URLQueryItem(name: "schema", value: "1.0")
+        ]
+        return components.url
     }
 
     /// Reads the `exp` (seconds since epoch) from a JWT's payload, for cache lifetime.
@@ -515,9 +668,9 @@ private struct CaronteResponse: Decodable, Sendable {
     }
 
     struct FairPlayDTO: Decodable, Sendable {
-        /// License server (`lurl`) — a templated URL with a `{pid}` placeholder.
-        let lurl: String?
-        /// Application certificate (`curl`).
+        /// Application certificate — the only field still used; the license URL and its
+        /// `releasePid`/`account` are resolved separately (see `MediasetStreamResolver`'s
+        /// `playback/check` + SMIL selector chain), not from this templated `lurl`.
         let curl: String?
     }
 
@@ -552,33 +705,6 @@ private struct CaronteResponse: Decodable, Sendable {
         drm = try? container.decode(DRMDTO.self, forKey: .drm)
         response = try? container.decode(Wrapper.self, forKey: .response)
     }
-
-    /// Builds the FairPlay parameters for a DRM-protected stream from the caronte `drm.fairplay`
-    /// block. `releasePid` isn't set here — theplatform requires it to equal the assetId embedded
-    /// in the SPC (the `skd://` content id), which is only known once the key request arrives, so
-    /// the delegate fills it in.
-    func fairPlayDRM(token: String) -> FairPlayDRM? {
-        guard let fairplay = resolvedFairPlay,
-              let curl = fairplay.curl?.trimmedNonEmpty,
-              let certificateURL = URL(string: curl), certificateURL.scheme == "https",
-              let lurl = fairplay.lurl?.trimmedNonEmpty else {
-            return nil
-        }
-        // Empty the query placeholders — theplatform reads releasePid from the body and the token
-        // from the `token=` param the delegate adds.
-        let base = lurl
-            .replacingOccurrences(of: "{pid}", with: "")
-            .replacingOccurrences(of: "{beToken}", with: "")
-        guard let licenseURL = URL(string: base), licenseURL.scheme == "https" else {
-            return nil
-        }
-        return FairPlayDRM(
-            certificateURL: certificateURL,
-            licenseURL: licenseURL,
-            token: token,
-            licenseHeaders: APIConfiguration.deliveryHeaders
-        )
-    }
 }
 
 private struct GBXResponse: Decodable, Sendable {
@@ -588,19 +714,16 @@ private struct GBXResponse: Decodable, Sendable {
     var resolvedGBX: String? { gbx ?? response?.gbx }
 }
 
-private struct GigyaJWTResponse: Decodable, Sendable {
-    let id_token: String?
-    let errorCode: Int?
-}
-
-private struct AccountLoginRequest: Encodable, Sendable {
-    let gt: String
+private struct AnonymousLoginRequest: Encodable, Sendable {
     let client_id: String
     let appName: String
 }
 
-private struct AccountLoginResponse: Decodable, Sendable {
-    struct Body: Decodable, Sendable { let caToken: String? }
+private struct AnonymousLoginResponse: Decodable, Sendable {
+    struct Body: Decodable, Sendable {
+        let sid: String?
+        let beToken: String?
+    }
     let response: Body?
 }
 

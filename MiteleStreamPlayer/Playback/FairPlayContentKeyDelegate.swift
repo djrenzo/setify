@@ -26,7 +26,9 @@ private func fpError(_ message: String) {
 /// then asks for a content key, and this delegate runs the standard exchange:
 ///
 ///   1. fetch the provider's FairPlay application certificate,
-///   2. build a Server Playback Context (SPC) from the `skd://` key id + certificate,
+///   2. build a Server Playback Context (SPC) using `drm.releasePid` as the content identifier
+///      (NOT the `skd://` key id from the manifest — theplatform's own release pid, resolved
+///      ahead of time by `MediasetStreamResolver` via its `playback/check` + SMIL selector),
 ///   3. POST the SPC to the key server,
 ///   4. hand the returned Content Key Context (CKC) back to AVFoundation.
 ///
@@ -76,15 +78,12 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
     }
 
     private func handle(_ keyRequest: AVContentKeyRequest) {
-        fpTrace("key request received, identifier=\(String(describing: keyRequest.identifier))")
-        guard let identifier = keyRequest.identifier as? String,
-              let contentID = Self.contentKeyID(from: identifier),
-              let assetID = contentID.data(using: .utf8) else {
-            fpError("unusable key identifier — cannot build content id")
+        fpTrace("key request received, identifier=\(String(describing: keyRequest.identifier)), releasePid=\(drm.releasePid)")
+        guard let assetID = drm.releasePid.data(using: .utf8), !drm.releasePid.isEmpty else {
+            fpError("empty releasePid — cannot build content id")
             keyRequest.processContentKeyResponseError(FairPlayError.invalidKeyIdentifier)
             return
         }
-        fpTrace("content id=\(contentID)")
 
         let appCertificate: Data
         do {
@@ -117,13 +116,13 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
                 return
             }
             fpTrace("SPC generated, \(spcData.count) bytes")
-            Task { await self.requestKey(spc: spcData, releasePid: contentID, keyRequest: request) }
+            Task { await self.requestKey(spc: spcData, keyRequest: request) }
         }
     }
 
-    private func requestKey(spc: Data, releasePid: String, keyRequest: AVContentKeyRequest) async {
+    private func requestKey(spc: Data, keyRequest: AVContentKeyRequest) async {
         do {
-            let ckc = try await fetchCKC(spc: spc, releasePid: releasePid)
+            let ckc = try await fetchCKC(spc: spc)
             fpTrace("CKC decoded, \(ckc.count) bytes — handing key to player ✅")
             let response = AVContentKeyResponse(fairPlayStreamingKeyResponseData: ckc)
             keyRequest.processContentKeyResponse(response)
@@ -136,7 +135,7 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
     /// theplatform's key server (`fpls/web/FairPlay?form=json`) takes the SPC in a JSON envelope
     /// `{"getFairplayLicense":{"releasePid":…,"spcMessage":…}}` with a non-empty `token=` query
     /// param, and answers `{"getFairplayLicenseResponse":{"ckcMessage":<base64>}}`.
-    private func fetchCKC(spc: Data, releasePid: String) async throws -> Data {
+    private func fetchCKC(spc: Data) async throws -> Data {
         guard var components = URLComponents(url: drm.licenseURL, resolvingAgainstBaseURL: false) else {
             throw FairPlayError.licenseServer(-1)
         }
@@ -153,14 +152,14 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let payload: [String: Any] = [
             "getFairplayLicense": [
-                "releasePid": releasePid,
+                "releasePid": drm.releasePid,
                 "spcMessage": spc.base64EncodedString()
             ]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
         let tokenDesc = drm.token.isEmpty ? "empty" : "\(drm.token.count) chars"
-        fpTrace("POST license (releasePid=\(releasePid), token \(tokenDesc))")
+        fpTrace("POST license (releasePid=\(drm.releasePid), token \(tokenDesc))")
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
         let bodyText = String(data: data.prefix(600), encoding: .utf8) ?? "<\(data.count) bytes non-utf8>"
@@ -178,16 +177,6 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
         let data = try Data(contentsOf: drm.certificateURL)
         cachedCertificate = data
         return data
-    }
-
-    /// AVFoundation hands us the whole `skd://…` URL as the request identifier; the content
-    /// identifier the SPC needs is everything after the scheme.
-    private static func contentKeyID(from identifier: String) -> String? {
-        guard let range = identifier.range(of: "skd://") else {
-            return identifier.isEmpty ? nil : identifier
-        }
-        let tail = String(identifier[range.upperBound...])
-        return tail.isEmpty ? nil : tail
     }
 
     /// theplatform answers `{"getFairplayLicenseResponse":{"ckcMessage":"<base64>"}}`; a few flat

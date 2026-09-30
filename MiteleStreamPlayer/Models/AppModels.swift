@@ -79,19 +79,25 @@ struct SubtitleTrack: Hashable, Sendable {
 }
 
 /// FairPlay Streaming parameters for a DRM-protected stream. Present only when the CDN offers
-/// no clear variant beside the encrypted one, so AVPlayer must acquire a content key. The URLs
-/// come straight from Mediaset's own caronte delivery response (`drm.fairplay`).
+/// no clear variant beside the encrypted one, so AVPlayer must acquire a content key.
 ///
 /// theplatform's key server (`fpls/web/FairPlay?form=json`) expects a JSON envelope
 /// `{"getFairplayLicense":{"releasePid":…,"spcMessage":…}}` and a non-empty `token=` query
-/// param; the delegate assembles those from the fields here.
+/// param; the delegate assembles those from the fields here. `releasePid` must be the same value
+/// used as the SPC's `contentIdentifier` — theplatform checks the two against each other — and,
+/// per Mediaset's own entitlement flow, both must be the real theplatform release pid (from the
+/// SMIL selector's `trackingData`), not an arbitrary per-play identifier.
 struct FairPlayDRM: Sendable {
-    /// The provider's FairPlay application certificate (`drm.fairplay.curl`).
+    /// The provider's FairPlay application certificate (from caronte's `drm.fairplay.curl`).
     let certificateURL: URL
-    /// The key server base URL (`drm.fairplay.lurl`), with `account`/`schema`/`form` already set.
+    /// The key server URL, with `account`/`schema`/`form` already set (`account` built from the
+    /// SMIL selector's `aid`).
     let licenseURL: URL
-    /// theplatform security token — sent as `token=`. An anonymous IDM `beToken`, which the key
-    /// server accepts for this catalog.
+    /// theplatform release pid for this asset (SMIL `trackingData.pid`) — used as both the SPC's
+    /// `contentIdentifier` and the license request's `releasePid`.
+    let releasePid: String
+    /// theplatform security token — sent as `token=`. The anonymous IDM `beToken` used throughout
+    /// the entitlement chain (`playback/check`, the SMIL fetch, and this license request).
     let token: String
     /// Headers to send with the license POST (same session/referer profile as playback).
     let licenseHeaders: [String: String]
