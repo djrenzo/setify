@@ -271,7 +271,17 @@ actor MediasetStreamResolver: StreamResolving {
             if response.errorCode != nil { throw PlaybackFailure.sessionExpired }
             throw PlaybackFailure.apiChanged
         }
-        return try await manifest(stream: stream, token: token, caronte: caronte)
+        // Best-available non-empty security token for theplatform's key server (the Gigya login
+        // token). See `FairPlayDRM.token`.
+        let creds = try? await credentials.credentials()
+        let drmToken = creds.flatMap { Self.loginToken(from: $0.cookie) } ?? identity.uid
+        return try await manifest(stream: stream, token: token, caronte: caronte, drmToken: drmToken)
+    }
+
+    private static func loginToken(from cookie: String) -> String? {
+        var components = URLComponents()
+        components.percentEncodedQuery = cookie.split(separator: "?", maxSplits: 1).last.map(String.init) ?? cookie
+        return components.queryItems?.first(where: { $0.name == "login_token" })?.value?.trimmedNonEmpty
     }
 
     /// Chooses between the clear and FairPlay variants of a signed stream.
@@ -283,7 +293,8 @@ actor MediasetStreamResolver: StreamResolving {
     private func manifest(
         stream: String,
         token: String,
-        caronte: CaronteResponse
+        caronte: CaronteResponse,
+        drmToken: String
     ) async throws -> SignedStream {
         let cleanToken = String(token.drop(while: { $0 == "?" || $0 == "&" }))
         let lowercased = stream.lowercased()
@@ -298,11 +309,11 @@ actor MediasetStreamResolver: StreamResolving {
                await clearVariantIsPlayable(clearURL) {
                 return SignedStream(url: clearURL, drm: nil)
             }
-            return try fairPlayStream(stream: stream, token: cleanToken, caronte: caronte)
+            return try fairPlayStream(stream: stream, token: cleanToken, caronte: caronte, drmToken: drmToken)
         }
 
         if lowercased.contains("fairplay") {
-            return try fairPlayStream(stream: stream, token: cleanToken, caronte: caronte)
+            return try fairPlayStream(stream: stream, token: cleanToken, caronte: caronte, drmToken: drmToken)
         }
 
         guard let url = tokenizedURL(stream: stream, token: cleanToken) else {
@@ -314,10 +325,11 @@ actor MediasetStreamResolver: StreamResolving {
     private func fairPlayStream(
         stream: String,
         token: String,
-        caronte: CaronteResponse
+        caronte: CaronteResponse,
+        drmToken: String
     ) throws -> SignedStream {
         guard let url = tokenizedURL(stream: stream, token: token),
-              let drm = caronte.fairPlayDRM(streamURL: stream) else {
+              let drm = caronte.fairPlayDRM(streamURL: stream, token: drmToken) else {
             // Encrypted stream with no usable DRM parameters — nothing playable to offer.
             throw PlaybackFailure.unavailableClearStream
         }
@@ -466,14 +478,15 @@ private struct CaronteResponse: Decodable, Sendable {
     }
 
     /// Builds the FairPlay parameters for a DRM-protected stream from the caronte `drm.fairplay`
-    /// block, resolving the license URL's `{pid}` placeholder.
+    /// block. theplatform wants `releasePid` in the request body (not the query) and a non-empty
+    /// `token`, both supplied here; the delegate assembles the final request.
     ///
     /// - Note: the caronte/mab delivery flow this app uses (unlike the official web player's
     ///   theplatform SMIL flow) never surfaces theplatform's release `pid`. The best per-media
     ///   identifier available here is the packager asset GUID embedded in the stream path, which
-    ///   is substituted below. If the key server rejects it, this substitution is the single
-    ///   place to revise — everything downstream (SPC/CKC exchange, player wiring) is unaffected.
-    func fairPlayDRM(streamURL: String) -> FairPlayDRM? {
+    ///   is used as the releasePid. theplatform accepts its format; if it turns out to be the
+    ///   wrong release, this is the single place to revise.
+    func fairPlayDRM(streamURL: String, token: String) -> FairPlayDRM? {
         guard let fairplay = resolvedFairPlay,
               let curl = fairplay.curl?.trimmedNonEmpty,
               let certificateURL = URL(string: curl), certificateURL.scheme == "https",
@@ -481,15 +494,19 @@ private struct CaronteResponse: Decodable, Sendable {
             return nil
         }
         let pid = Self.assetGUID(from: streamURL) ?? ""
-        let resolved = lurl
+        // The `{pid}`/`{beToken}` placeholders in the query are harmless once emptied — theplatform
+        // reads releasePid from the body and the token from the `token=` param the delegate adds.
+        let base = lurl
             .replacingOccurrences(of: "{pid}", with: pid)
             .replacingOccurrences(of: "{beToken}", with: "")
-        guard let licenseURL = URL(string: resolved), licenseURL.scheme == "https" else {
+        guard let licenseURL = URL(string: base), licenseURL.scheme == "https" else {
             return nil
         }
         return FairPlayDRM(
             certificateURL: certificateURL,
             licenseURL: licenseURL,
+            releasePid: pid,
+            token: token,
             licenseHeaders: APIConfiguration.deliveryHeaders
         )
     }

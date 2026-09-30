@@ -133,20 +133,33 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
         }
     }
 
-    /// The key server expects the SPC as a base64 form field and answers with the CKC. Mediaset's
-    /// endpoint uses `form=json`, so the CKC arrives base64-encoded inside a JSON envelope; a raw
-    /// binary body is also accepted as a fallback for servers that return the CKC directly.
+    /// theplatform's key server (`fpls/web/FairPlay?form=json`) takes the SPC in a JSON envelope
+    /// `{"getFairplayLicense":{"releasePid":…,"spcMessage":…}}` with a non-empty `token=` query
+    /// param, and answers `{"getFairplayLicenseResponse":{"ckcMessage":<base64>}}`.
     private func fetchCKC(spc: Data) async throws -> Data {
-        var request = URLRequest(url: drm.licenseURL)
+        guard var components = URLComponents(url: drm.licenseURL, resolvingAgainstBaseURL: false) else {
+            throw FairPlayError.licenseServer(-1)
+        }
+        var query = components.queryItems ?? []
+        query.append(URLQueryItem(name: "token", value: drm.token))
+        components.queryItems = query
+        let url = components.url ?? drm.licenseURL
+
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         for (field, value) in drm.licenseHeaders {
             request.setValue(value, forHTTPHeaderField: field)
         }
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        let body = "spc=\(spc.base64EncodedString().urlFormEncoded)"
-        request.httpBody = body.data(using: .utf8)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let payload: [String: Any] = [
+            "getFairplayLicense": [
+                "releasePid": drm.releasePid,
+                "spcMessage": spc.base64EncodedString()
+            ]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
-        fpTrace("POST license: \(drm.licenseURL.absoluteString)")
+        fpTrace("POST license (releasePid=\(drm.releasePid), token \(drm.token.isEmpty ? "empty" : "\(drm.token.count) chars))")
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
         let bodyText = String(data: data.prefix(600), encoding: .utf8) ?? "<\(data.count) bytes non-utf8>"
@@ -176,11 +189,15 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
         return tail.isEmpty ? nil : tail
     }
 
-    /// A `form=json` response looks like `{"ckc":"<base64>"}` (key name varies by deployment);
-    /// otherwise the body is either raw CKC bytes or a bare base64 string.
+    /// theplatform answers `{"getFairplayLicenseResponse":{"ckcMessage":"<base64>"}}`; a few flat
+    /// shapes and a bare base64 / raw body are also accepted for robustness.
     private static func decodeCKC(from data: Data) throws -> Data {
         if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            for key in ["ckc", "CkcMessage", "ckcMessage", "license", "getFairplayLicenseResponse"] {
+            if let response = object["getFairplayLicenseResponse"] as? [String: Any],
+               let ckc = response["ckcMessage"] as? String, let decoded = Data(base64Encoded: ckc) {
+                return decoded
+            }
+            for key in ["ckcMessage", "ckc", "CkcMessage", "license"] {
                 if let value = object[key] as? String, let decoded = Data(base64Encoded: value) {
                     return decoded
                 }
@@ -201,11 +218,4 @@ enum FairPlayError: Error {
     case missingSPC
     case malformedCKC
     case licenseServer(Int)
-}
-
-private extension String {
-    /// Base64 can contain `+`, `/`, `=`, which must be percent-escaped inside a form body.
-    var urlFormEncoded: String {
-        addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? self
-    }
 }

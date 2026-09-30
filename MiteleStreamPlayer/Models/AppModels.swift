@@ -81,11 +81,21 @@ struct SubtitleTrack: Hashable, Sendable {
 /// FairPlay Streaming parameters for a DRM-protected stream. Present only when the CDN offers
 /// no clear variant beside the encrypted one, so AVPlayer must acquire a content key. The URLs
 /// come straight from Mediaset's own caronte delivery response (`drm.fairplay`).
+///
+/// theplatform's key server (`fpls/web/FairPlay?form=json`) expects a JSON envelope
+/// `{"getFairplayLicense":{"releasePid":…,"spcMessage":…}}` and a non-empty `token=` query
+/// param; the delegate assembles those from the fields here.
 struct FairPlayDRM: Sendable {
     /// The provider's FairPlay application certificate (`drm.fairplay.curl`).
     let certificateURL: URL
-    /// The key server the SPC is POSTed to, already resolved (`drm.fairplay.lurl`).
+    /// The key server base URL (`drm.fairplay.lurl`), with `account`/`schema`/`form` already set.
     let licenseURL: URL
+    /// theplatform release id for the asset — sent in the request body.
+    let releasePid: String
+    /// Security token — sent as `token=`. theplatform only requires it to be non-empty at the
+    /// SPC-validation stage; whether a real license needs a valid theplatform beToken is verified
+    /// on device.
+    let token: String
     /// Headers to send with the license POST (same session/referer profile as playback).
     let licenseHeaders: [String: String]
 }
