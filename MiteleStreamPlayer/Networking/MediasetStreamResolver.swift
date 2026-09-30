@@ -12,8 +12,9 @@ actor MediasetStreamResolver: StreamResolving {
     private let credentials: any CredentialProviding
     private let identityService: GigyaIdentityService
     private let atresPlayer: any AtresPlayerFetching
-    /// Cached anonymous theplatform `beToken` for FairPlay licensing, with its JWT expiry.
-    private var cachedBeToken: (value: String, expiry: Date)?
+    /// Cached theplatform content-authorization token (`caToken`) for FairPlay licensing, with its
+    /// JWT expiry.
+    private var cachedToken: (value: String, expiry: Date)?
 
     init(
         client: HTTPClient,
@@ -318,39 +319,83 @@ actor MediasetStreamResolver: StreamResolving {
         token: String,
         caronte: CaronteResponse
     ) async throws -> SignedStream {
-        // The theplatform beToken (anonymous IDM login) is only needed on this DRM path, so it's
+        // The theplatform content-authorization token is only needed on this DRM path, so it's
         // fetched here rather than for every clear stream.
-        let beToken = (try? await theplatformBeToken()) ?? ""
+        let caToken = (try? await theplatformToken()) ?? ""
         guard let url = tokenizedURL(stream: stream, token: token),
-              let drm = caronte.fairPlayDRM(token: beToken) else {
+              let drm = caronte.fairPlayDRM(token: caToken) else {
             // Encrypted stream with no usable DRM parameters — nothing playable to offer.
             throw PlaybackFailure.unavailableClearStream
         }
         return SignedStream(url: url, drm: drm)
     }
 
-    /// Fetches (and caches) a theplatform `beToken` via Mediaset's anonymous IDM login. theplatform
-    /// requires it as the `token=` on the FairPlay license request; an anonymous token is accepted
-    /// for this catalog, so no user account is involved.
-    private func theplatformBeToken() async throws -> String {
-        if let cached = cachedBeToken, cached.expiry > Date.now.addingTimeInterval(60) {
+    /// Fetches (and caches) the theplatform content-authorization token (`caToken`) the FairPlay
+    /// license request needs. The catalog is entitlement-gated, so an anonymous token is rejected
+    /// ("user is not entitled"); this exchanges the current Gigya session for an account token:
+    /// Gigya `getJWT` → IDM `account/login` → `caToken`.
+    private func theplatformToken() async throws -> String {
+        if let cached = cachedToken, cached.expiry > Date.now.addingTimeInterval(60) {
             return cached.value
         }
+        guard let creds = try await credentials.credentials(), creds.isValid else {
+            throw PlaybackFailure.missingCredentials
+        }
+        let (apiKey, loginToken) = try Self.gigyaParameters(from: creds.cookie)
+        let jwt = try await gigyaJWT(apiKey: apiKey, loginToken: loginToken, gmid: creds.gmid)
+        let caToken = try await accountLogin(gt: jwt)
+        cachedToken = (caToken, Self.jwtExpiry(caToken) ?? Date.now.addingTimeInterval(3600))
+        return caToken
+    }
+
+    /// Signs the current session into a short-lived Gigya JWT, used as the `gt` for IDM login.
+    private func gigyaJWT(apiKey: String, loginToken: String, gmid: String) async throws -> String {
+        guard var components = URLComponents(url: APIURL.gigyaJWT, resolvingAgainstBaseURL: false) else {
+            throw PlaybackFailure.invalidURL
+        }
+        components.queryItems = [
+            URLQueryItem(name: "APIKey", value: apiKey),
+            URLQueryItem(name: "login_token", value: loginToken),
+            URLQueryItem(name: "format", value: "json")
+        ]
+        guard let url = components.url else { throw PlaybackFailure.invalidURL }
+        let endpoint = Endpoint(url: url, headers: APIConfiguration.sessionHeaders(gmid: gmid))
+        let response = try await client.decode(GigyaJWTResponse.self, from: endpoint)
+        guard response.errorCode == nil || response.errorCode == 0,
+              let jwt = response.id_token?.trimmedNonEmpty else {
+            throw PlaybackFailure.sessionExpired
+        }
+        return jwt
+    }
+
+    /// Exchanges a Gigya JWT for a Mediaset account `caToken` at IDM.
+    private func accountLogin(gt: String) async throws -> String {
         let body = try JSONEncoder().encode(
-            AnonymousLoginRequest(client_id: "default", appName: APIURL.mediasetAppName)
+            AccountLoginRequest(gt: gt, client_id: "default", appName: APIURL.mediasetAppName)
         )
         let endpoint = Endpoint(
-            url: APIURL.idmAnonymousLogin,
+            url: APIURL.idmAccountLogin,
             method: "POST",
             headers: ["Content-Type": "application/json", "Accept": "application/json"],
             body: body
         )
-        let response = try await client.decode(AnonymousLoginResponse.self, from: endpoint)
-        guard let token = response.response?.beToken?.trimmedNonEmpty else {
-            throw PlaybackFailure.apiChanged
+        let response = try await client.decode(AccountLoginResponse.self, from: endpoint)
+        guard let caToken = response.response?.caToken?.trimmedNonEmpty else {
+            throw PlaybackFailure.sessionExpired
         }
-        cachedBeToken = (token, Self.jwtExpiry(token) ?? Date.now.addingTimeInterval(3600))
-        return token
+        return caToken
+    }
+
+    /// Pulls `APIKey` and `login_token` out of the stored Gigya cookie string.
+    private static func gigyaParameters(from cookie: String) throws -> (apiKey: String, loginToken: String) {
+        var components = URLComponents()
+        components.percentEncodedQuery = cookie.split(separator: "?", maxSplits: 1).last.map(String.init) ?? cookie
+        let items = components.queryItems ?? []
+        guard let apiKey = items.first(where: { $0.name == "APIKey" })?.value?.trimmedNonEmpty,
+              let loginToken = items.first(where: { $0.name == "login_token" })?.value?.trimmedNonEmpty else {
+            throw PlaybackFailure.sessionExpired
+        }
+        return (apiKey, loginToken)
     }
 
     /// Reads the `exp` (seconds since epoch) from a JWT's payload, for cache lifetime.
@@ -543,13 +588,19 @@ private struct GBXResponse: Decodable, Sendable {
     var resolvedGBX: String? { gbx ?? response?.gbx }
 }
 
-private struct AnonymousLoginRequest: Encodable, Sendable {
+private struct GigyaJWTResponse: Decodable, Sendable {
+    let id_token: String?
+    let errorCode: Int?
+}
+
+private struct AccountLoginRequest: Encodable, Sendable {
+    let gt: String
     let client_id: String
     let appName: String
 }
 
-private struct AnonymousLoginResponse: Decodable, Sendable {
-    struct Body: Decodable, Sendable { let beToken: String? }
+private struct AccountLoginResponse: Decodable, Sendable {
+    struct Body: Decodable, Sendable { let caToken: String? }
     let response: Body?
 }
 

@@ -64,10 +64,13 @@ enum APIURL {
     static let gigyaAccount = URL(string: "https://login.mitele.es/accounts.getAccountInfo")!
     static let mab = URL(string: "https://mab.mediaset.es/1.0.0/get")!
     static let cerbero = URL(string: "https://cerbero.mediaset.es/")!
-    /// Mediaset's IDM service (AWS-fronted). `idm/v3.0/anonymous/login` returns a theplatform
-    /// `beToken`, needed to authorize the FairPlay license request. Base + appName come from the
-    /// web player's Firebase remote config (project `rtispa-ott-esp`, `rtiLabLoginKit`).
-    static let idmAnonymousLogin = URL(string: "https://services-ott-prod-fe.mediaset.net/esp/idm/v3.0/anonymous/login")!
+    /// Gigya JWT for the current session — exchanged at Mediaset's IDM for a content-authorization
+    /// token. Same host/APIKey as `gigyaAccount`.
+    static let gigyaJWT = URL(string: "https://login.mitele.es/accounts.getJWT")!
+    /// Mediaset's IDM account login (AWS-fronted): `{gt, client_id, appName}` → `{caToken}`, the
+    /// entitled token the FairPlay license request needs. Base + appName come from the web player's
+    /// Firebase remote config (project `rtispa-ott-esp`, `rtiLabLoginKit`).
+    static let idmAccountLogin = URL(string: "https://services-ott-prod-fe.mediaset.net/esp/idm/v3.0/account/login")!
     static let mediasetAppName = "web//mediasetplay-web/1.5.1-e5947e0"
 
     static func mabURL(oid: String, eid: String) throws -> URL {
