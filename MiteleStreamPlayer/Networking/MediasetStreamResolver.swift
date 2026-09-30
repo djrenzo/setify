@@ -337,7 +337,7 @@ actor MediasetStreamResolver: StreamResolving {
             return cached.value
         }
         let body = try JSONEncoder().encode(
-            AnonymousLoginRequest(client_id: "default", appName: APIConfiguration.mediasetAppName)
+            AnonymousLoginRequest(client_id: "default", appName: APIURL.mediasetAppName)
         )
         let endpoint = Endpoint(
             url: APIURL.idmAnonymousLogin,
