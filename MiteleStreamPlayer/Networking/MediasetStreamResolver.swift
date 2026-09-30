@@ -12,6 +12,8 @@ actor MediasetStreamResolver: StreamResolving {
     private let credentials: any CredentialProviding
     private let identityService: GigyaIdentityService
     private let atresPlayer: any AtresPlayerFetching
+    /// Cached anonymous theplatform `beToken` for FairPlay licensing, with its JWT expiry.
+    private var cachedBeToken: (value: String, expiry: Date)?
 
     init(
         client: HTTPClient,
@@ -271,17 +273,7 @@ actor MediasetStreamResolver: StreamResolving {
             if response.errorCode != nil { throw PlaybackFailure.sessionExpired }
             throw PlaybackFailure.apiChanged
         }
-        // Best-available non-empty security token for theplatform's key server (the Gigya login
-        // token). See `FairPlayDRM.token`.
-        let creds = try? await credentials.credentials()
-        let drmToken = creds.flatMap { Self.loginToken(from: $0.cookie) } ?? identity.uid
-        return try await manifest(stream: stream, token: token, caronte: caronte, drmToken: drmToken)
-    }
-
-    private static func loginToken(from cookie: String) -> String? {
-        var components = URLComponents()
-        components.percentEncodedQuery = cookie.split(separator: "?", maxSplits: 1).last.map(String.init) ?? cookie
-        return components.queryItems?.first(where: { $0.name == "login_token" })?.value?.trimmedNonEmpty
+        return try await manifest(stream: stream, token: token, caronte: caronte)
     }
 
     /// Chooses between the clear and FairPlay variants of a signed stream.
@@ -293,8 +285,7 @@ actor MediasetStreamResolver: StreamResolving {
     private func manifest(
         stream: String,
         token: String,
-        caronte: CaronteResponse,
-        drmToken: String
+        caronte: CaronteResponse
     ) async throws -> SignedStream {
         let cleanToken = String(token.drop(while: { $0 == "?" || $0 == "&" }))
         let lowercased = stream.lowercased()
@@ -309,11 +300,11 @@ actor MediasetStreamResolver: StreamResolving {
                await clearVariantIsPlayable(clearURL) {
                 return SignedStream(url: clearURL, drm: nil)
             }
-            return try fairPlayStream(stream: stream, token: cleanToken, caronte: caronte, drmToken: drmToken)
+            return try await fairPlayStream(stream: stream, token: cleanToken, caronte: caronte)
         }
 
         if lowercased.contains("fairplay") {
-            return try fairPlayStream(stream: stream, token: cleanToken, caronte: caronte, drmToken: drmToken)
+            return try await fairPlayStream(stream: stream, token: cleanToken, caronte: caronte)
         }
 
         guard let url = tokenizedURL(stream: stream, token: cleanToken) else {
@@ -325,15 +316,55 @@ actor MediasetStreamResolver: StreamResolving {
     private func fairPlayStream(
         stream: String,
         token: String,
-        caronte: CaronteResponse,
-        drmToken: String
-    ) throws -> SignedStream {
+        caronte: CaronteResponse
+    ) async throws -> SignedStream {
+        // The theplatform beToken (anonymous IDM login) is only needed on this DRM path, so it's
+        // fetched here rather than for every clear stream.
+        let beToken = (try? await theplatformBeToken()) ?? ""
         guard let url = tokenizedURL(stream: stream, token: token),
-              let drm = caronte.fairPlayDRM(token: drmToken) else {
+              let drm = caronte.fairPlayDRM(token: beToken) else {
             // Encrypted stream with no usable DRM parameters — nothing playable to offer.
             throw PlaybackFailure.unavailableClearStream
         }
         return SignedStream(url: url, drm: drm)
+    }
+
+    /// Fetches (and caches) a theplatform `beToken` via Mediaset's anonymous IDM login. theplatform
+    /// requires it as the `token=` on the FairPlay license request; an anonymous token is accepted
+    /// for this catalog, so no user account is involved.
+    private func theplatformBeToken() async throws -> String {
+        if let cached = cachedBeToken, cached.expiry > Date.now.addingTimeInterval(60) {
+            return cached.value
+        }
+        let body = try JSONEncoder().encode(
+            AnonymousLoginRequest(client_id: "default", appName: APIConfiguration.mediasetAppName)
+        )
+        let endpoint = Endpoint(
+            url: APIURL.idmAnonymousLogin,
+            method: "POST",
+            headers: ["Content-Type": "application/json", "Accept": "application/json"],
+            body: body
+        )
+        let response = try await client.decode(AnonymousLoginResponse.self, from: endpoint)
+        guard let token = response.response?.beToken?.trimmedNonEmpty else {
+            throw PlaybackFailure.apiChanged
+        }
+        cachedBeToken = (token, Self.jwtExpiry(token) ?? Date.now.addingTimeInterval(3600))
+        return token
+    }
+
+    /// Reads the `exp` (seconds since epoch) from a JWT's payload, for cache lifetime.
+    private static func jwtExpiry(_ jwt: String) -> Date? {
+        let parts = jwt.split(separator: ".")
+        guard parts.count >= 2 else { return nil }
+        var base64 = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        while base64.count % 4 != 0 { base64.append("=") }
+        guard let data = Data(base64Encoded: base64),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let exp = object["exp"] as? Double else {
+            return nil
+        }
+        return Date(timeIntervalSince1970: exp)
     }
 
     private func tokenizedURL(stream: String, token: String) -> URL? {
@@ -510,6 +541,16 @@ private struct GBXResponse: Decodable, Sendable {
     let gbx: String?
     let response: Wrapper?
     var resolvedGBX: String? { gbx ?? response?.gbx }
+}
+
+private struct AnonymousLoginRequest: Encodable, Sendable {
+    let client_id: String
+    let appName: String
+}
+
+private struct AnonymousLoginResponse: Decodable, Sendable {
+    struct Body: Decodable, Sendable { let beToken: String? }
+    let response: Body?
 }
 
 private struct CerberoPayload: Encodable, Sendable {

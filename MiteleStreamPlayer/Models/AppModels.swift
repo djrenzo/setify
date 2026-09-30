@@ -90,8 +90,8 @@ struct FairPlayDRM: Sendable {
     let certificateURL: URL
     /// The key server base URL (`drm.fairplay.lurl`), with `account`/`schema`/`form` already set.
     let licenseURL: URL
-    /// Security token — sent as `token=`. The session's Gigya `login_token`; theplatform accepts
-    /// it for this content (it never surfaced an auth error, only the releasePid/SPC check).
+    /// theplatform security token — sent as `token=`. An anonymous IDM `beToken`, which the key
+    /// server accepts for this catalog.
     let token: String
     /// Headers to send with the license POST (same session/referer profile as playback).
     let licenseHeaders: [String: String]
