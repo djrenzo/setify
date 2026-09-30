@@ -339,7 +339,7 @@ actor MediasetStreamResolver: StreamResolving {
             licenseURL: licenseURL,
             releasePid: selector.pid,
             token: selector.beToken,
-            licenseHeaders: APIConfiguration.deliveryHeaders
+            licenseHeaders: APIConfiguration.ottHeaders
         )
         return SignedStream(url: url, drm: drm)
     }
@@ -391,10 +391,13 @@ actor MediasetStreamResolver: StreamResolving {
         let body = try JSONEncoder().encode(
             AnonymousLoginRequest(client_id: UUID().uuidString.lowercased(), appName: APIURL.mediasetInfinityAppName)
         )
+        var headers = APIConfiguration.ottHeaders
+        headers["Content-Type"] = "application/json"
+        headers["Accept"] = "application/json"
         let endpoint = Endpoint(
             url: APIURL.idmAnonymousLogin,
             method: "POST",
-            headers: ["Content-Type": "application/json", "Accept": "application/json"],
+            headers: headers,
             body: body
         )
         let response = try await client.decode(AnonymousLoginResponse.self, from: endpoint)

@@ -8,6 +8,11 @@ enum DefaultCredentials {
 enum APIConfiguration {
     static let chromeUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
     static let firefoxUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0"
+    /// Mediaset's OTT entitlement chain (`playback/v3.0/check` + SMIL selector) picks the release —
+    /// and, critically, its DRM flavor — by device-sniffing the User-Agent: a desktop UA gets a
+    /// Widevine/DASH release, this iOS Safari UA gets the FairPlay/HLS one (`security="fairplay"`
+    /// in the SMIL). Confirmed against a real device capture.
+    static let mobileSafariUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
 
     static let graphQLHeaders = [
         "User-Agent": firefoxUserAgent,
@@ -43,10 +48,12 @@ enum APIConfiguration {
         "Origin": "https://www.rtve.es"
     ]
 
-    /// Headers for Mediaset's OTT service layer (IDM anonymous login, `playback/v3.0/check`, and
-    /// the SMIL media selector it returns) — the FairPlay/Widevine entitlement chain.
+    /// Headers for Mediaset's OTT service layer (IDM anonymous login, `playback/v3.0/check`, the
+    /// SMIL media selector it returns, and the FairPlay license request itself) — the whole
+    /// FairPlay entitlement chain. The User-Agent here is what steers device detection toward the
+    /// FairPlay-flavored release — see `mobileSafariUserAgent`.
     static let ottHeaders = [
-        "User-Agent": chromeUserAgent,
+        "User-Agent": mobileSafariUserAgent,
         "Origin": "https://www.mediasetinfinity.es",
         "Referer": "https://www.mediasetinfinity.es/"
     ]

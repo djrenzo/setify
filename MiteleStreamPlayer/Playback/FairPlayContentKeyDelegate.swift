@@ -133,14 +133,17 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
     }
 
     /// theplatform's key server (`fpls/web/FairPlay?form=json`) takes the SPC in a JSON envelope
-    /// `{"getFairplayLicense":{"releasePid":…,"spcMessage":…}}` with a non-empty `token=` query
-    /// param, and answers `{"getFairplayLicenseResponse":{"ckcMessage":<base64>}}`.
+    /// `{"getFairplayLicense":{"spcMessage":…,"releasePid":…}}` — `releasePid` also duplicated in
+    /// the URL query, matching a captured real request — authenticates via `Authorization: Basic
+    /// base64(":"+beToken)` (the same scheme as the SMIL fetch, NOT a `token=` query param as
+    /// theplatform's generic docs would suggest), and answers
+    /// `{"getFairplayLicenseResponse":{"ckcResponse":<base64>}}`.
     private func fetchCKC(spc: Data) async throws -> Data {
         guard var components = URLComponents(url: drm.licenseURL, resolvingAgainstBaseURL: false) else {
             throw FairPlayError.licenseServer(-1)
         }
         var query = components.queryItems ?? []
-        query.append(URLQueryItem(name: "token", value: drm.token))
+        query.append(URLQueryItem(name: "releasePid", value: drm.releasePid))
         components.queryItems = query
         let url = components.url ?? drm.licenseURL
 
@@ -150,10 +153,12 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
             request.setValue(value, forHTTPHeaderField: field)
         }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let basic = Data(":\(drm.token)".utf8).base64EncodedString()
+        request.setValue("Basic \(basic)", forHTTPHeaderField: "Authorization")
         let payload: [String: Any] = [
             "getFairplayLicense": [
-                "releasePid": drm.releasePid,
-                "spcMessage": spc.base64EncodedString()
+                "spcMessage": spc.base64EncodedString(),
+                "releasePid": drm.releasePid
             ]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
@@ -179,15 +184,19 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
         return data
     }
 
-    /// theplatform answers `{"getFairplayLicenseResponse":{"ckcMessage":"<base64>"}}`; a few flat
-    /// shapes and a bare base64 / raw body are also accepted for robustness.
+    /// theplatform answers `{"getFairplayLicenseResponse":{"ckcResponse":"<base64>"}}` (confirmed
+    /// against a real license exchange); a few other flat shapes and a bare base64 / raw body are
+    /// also accepted for robustness.
     private static func decodeCKC(from data: Data) throws -> Data {
         if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if let response = object["getFairplayLicenseResponse"] as? [String: Any],
-               let ckc = response["ckcMessage"] as? String, let decoded = Data(base64Encoded: ckc) {
-                return decoded
+            if let response = object["getFairplayLicenseResponse"] as? [String: Any] {
+                for key in ["ckcResponse", "ckcMessage", "ckc"] {
+                    if let value = response[key] as? String, let decoded = Data(base64Encoded: value) {
+                        return decoded
+                    }
+                }
             }
-            for key in ["ckcMessage", "ckc", "CkcMessage", "license"] {
+            for key in ["ckcResponse", "ckcMessage", "ckc", "CkcMessage", "license"] {
                 if let value = object[key] as? String, let decoded = Data(base64Encoded: value) {
                     return decoded
                 }
