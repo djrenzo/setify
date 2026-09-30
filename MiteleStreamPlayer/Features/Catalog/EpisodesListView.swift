@@ -21,6 +21,7 @@ struct EpisodesListView: View {
                         card: episode,
                         watchedFraction: model.watchProgress.fraction(for: episode.id),
                         downloadState: model.downloads.state(for: episode.id),
+                        isDRMProtected: model.drmRegistry.isProtected(episode.id),
                         onDownloadTap: { handleDownloadTap(episode) }
                     ) {
                         model.playback.prepare(.video(episode))
@@ -47,6 +48,7 @@ struct EpisodesListView: View {
         .task { store.loadInitial() }
         .task { await model.watchProgress.loadIfNeeded() }
         .task { await model.downloads.loadIfNeeded() }
+        .task { await model.drmRegistry.loadIfNeeded() }
     }
 
     private func handleDownloadTap(_ episode: MediaCard) {
@@ -65,6 +67,7 @@ struct EpisodeRow: View {
     let card: MediaCard
     let watchedFraction: Double
     let downloadState: DownloadState
+    var isDRMProtected: Bool = false
     let onDownloadTap: () -> Void
     let onPlay: () -> Void
 
@@ -82,7 +85,7 @@ struct EpisodeRow: View {
                     }
                 }
                 Spacer(minLength: 0)
-                DownloadButton(state: downloadState, onTap: onDownloadTap)
+                trailingControls
                 Image(systemName: "play.circle.fill").font(.title2).foregroundStyle(Color.cinemaAccent)
             }
             .padding(12)
@@ -91,6 +94,22 @@ struct EpisodeRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Reproducir \(card.title)")
+    }
+
+    /// FairPlay-only episodes still play (via DRM) but can't be downloaded, so the download
+    /// control is replaced by a non-interactive warning badge.
+    @ViewBuilder
+    private var trailingControls: some View {
+        if isDRMProtected {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.yellow)
+                .frame(width: 30, height: 30)
+                .background(.black.opacity(0.45), in: .circle)
+                .accessibilityLabel("Solo con protección FairPlay: no se puede descargar")
+        } else {
+            DownloadButton(state: downloadState, onTap: onDownloadTap)
+        }
     }
 
     private var artwork: some View {

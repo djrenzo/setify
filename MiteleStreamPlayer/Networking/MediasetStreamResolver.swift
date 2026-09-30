@@ -160,17 +160,18 @@ actor MediasetStreamResolver: StreamResolving {
         async let gbx = fetchGBX(url: gbxURL, headers: headers)
         let delivery = try await (caronte, gbx)
         await progress(.authorizing)
-        let finalURL = try await signedURL(caronte: delivery.0, gbx: delivery.1)
+        let signed = try await signedURL(caronte: delivery.0, gbx: delivery.1)
         await progress(.loadingPlayer)
         return ResolvedStream(
             title: channel.name,
-            url: finalURL,
+            url: signed.url,
             headers: APIConfiguration.mediasetPlaybackHeaders,
             allowsHeaderFallback: true,
             subtitles: subtitleTracks(from: delivery.0),
             artworkURL: nil,
             isLive: true,
-            contentID: nil
+            contentID: nil,
+            drm: signed.drm
         )
     }
 
@@ -214,17 +215,18 @@ actor MediasetStreamResolver: StreamResolving {
         )
         let delivery = try await (caronte, gbx)
         await progress(.authorizing)
-        let finalURL = try await signedURL(caronte: delivery.0, gbx: delivery.1)
+        let signed = try await signedURL(caronte: delivery.0, gbx: delivery.1)
         await progress(.loadingPlayer)
         return ResolvedStream(
             title: card.title,
-            url: finalURL,
+            url: signed.url,
             headers: APIConfiguration.mediasetPlaybackHeaders,
             allowsHeaderFallback: true,
             subtitles: subtitleTracks(from: delivery.0),
             artworkURL: card.artworkURL,
             isLive: false,
-            contentID: card.id
+            contentID: card.id,
+            drm: signed.drm
         )
     }
 
@@ -237,7 +239,14 @@ actor MediasetStreamResolver: StreamResolving {
         }
     }
 
-    private func signedURL(caronte: CaronteResponse, gbx: String) async throws -> URL {
+    /// A signed, playable manifest — clear when the CDN offers one, otherwise the FairPlay
+    /// variant with the DRM parameters AVPlayer needs to acquire a content key.
+    private struct SignedStream {
+        let url: URL
+        let drm: FairPlayDRM?
+    }
+
+    private func signedURL(caronte: CaronteResponse, gbx: String) async throws -> SignedStream {
         guard let stream = caronte.stream?.trimmedNonEmpty,
               let bbx = caronte.resolvedBBX?.trimmedNonEmpty else {
             throw PlaybackFailure.apiChanged
@@ -262,27 +271,77 @@ actor MediasetStreamResolver: StreamResolving {
             if response.errorCode != nil { throw PlaybackFailure.sessionExpired }
             throw PlaybackFailure.apiChanged
         }
-        let url = try finalManifestURL(stream: stream, token: token)
-        if stream.range(of: "hls-fairplay.ism", options: .caseInsensitive) != nil {
-            try await verifyClearVariantExists(at: url)
+        return try await manifest(stream: stream, token: token, caronte: caronte)
+    }
+
+    /// Chooses between the clear and FairPlay variants of a signed stream.
+    ///
+    /// Most uploads carry a clear `main.ism` beside the encrypted `hls-fairplay.ism`, and the app
+    /// prefers it (no DRM, so it also downloads). Some are packaged FairPlay-only, and the CDN
+    /// then answers the clear manifest with `403`/`404`; those play through AVPlayer's FairPlay
+    /// path using the DRM parameters from the same caronte response.
+    private func manifest(
+        stream: String,
+        token: String,
+        caronte: CaronteResponse
+    ) async throws -> SignedStream {
+        let cleanToken = String(token.drop(while: { $0 == "?" || $0 == "&" }))
+        let lowercased = stream.lowercased()
+
+        if lowercased.contains("hls-fairplay.ism") {
+            let clearStream = stream.replacingOccurrences(
+                of: "hls-fairplay.ism",
+                with: "main.ism",
+                options: [.caseInsensitive]
+            )
+            if let clearURL = tokenizedURL(stream: clearStream, token: cleanToken),
+               await clearVariantIsPlayable(clearURL) {
+                return SignedStream(url: clearURL, drm: nil)
+            }
+            return try fairPlayStream(stream: stream, token: cleanToken, caronte: caronte)
+        }
+
+        if lowercased.contains("fairplay") {
+            return try fairPlayStream(stream: stream, token: cleanToken, caronte: caronte)
+        }
+
+        guard let url = tokenizedURL(stream: stream, token: cleanToken) else {
+            throw PlaybackFailure.invalidURL
+        }
+        return SignedStream(url: url, drm: nil)
+    }
+
+    private func fairPlayStream(
+        stream: String,
+        token: String,
+        caronte: CaronteResponse
+    ) throws -> SignedStream {
+        guard let url = tokenizedURL(stream: stream, token: token),
+              let drm = caronte.fairPlayDRM(streamURL: stream) else {
+            // Encrypted stream with no usable DRM parameters — nothing playable to offer.
+            throw PlaybackFailure.unavailableClearStream
+        }
+        return SignedStream(url: url, drm: drm)
+    }
+
+    private func tokenizedURL(stream: String, token: String) -> URL? {
+        let separator = stream.contains("?") ? "&" : "?"
+        guard let url = URL(string: stream + separator + token), url.scheme == "https" else {
+            return nil
         }
         return url
     }
 
-    /// The clear `main.ism` variant swapped in by `finalManifestURL` isn't guaranteed to exist —
-    /// some uploads are packaged FairPlay-only, and the CDN then answers the clear manifest with
-    /// `403` even though the token is valid. Probing it here surfaces that as a clear
-    /// "unsupported content" failure instead of an opaque AVPlayer error. Transport errors are
-    /// deliberately ignored so a flaky probe doesn't block playback AVPlayer might manage.
-    private func verifyClearVariantExists(at url: URL) async throws {
+    /// The clear `main.ism` variant isn't guaranteed to exist — FairPlay-only uploads make the
+    /// CDN answer it with `403`/`404` even with a valid token. A `false` result routes playback to
+    /// FairPlay instead. Transport errors are treated as "playable" so a flaky probe doesn't push
+    /// a stream to DRM that AVPlayer might otherwise manage clear.
+    private func clearVariantIsPlayable(_ url: URL) async -> Bool {
         let endpoint = Endpoint(url: url, headers: APIConfiguration.mediasetPlaybackHeaders, timeout: 15)
         guard let (status, _) = try? await client.rawData(for: endpoint) else {
-            try Task.checkCancellation()
-            return
+            return true
         }
-        if status == 403 || status == 404 {
-            throw PlaybackFailure.unavailableClearStream
-        }
+        return status != 403 && status != 404
     }
 
     private func fetchCaronte(url: URL, headers: [String: String]) async throws -> CaronteResponse {
@@ -324,27 +383,6 @@ actor MediasetStreamResolver: StreamResolving {
         return result
     }
 
-    private func finalManifestURL(stream: String, token: String) throws -> URL {
-        let lowercased = stream.lowercased()
-        let clearStream: String
-        if lowercased.contains("hls-fairplay.ism") {
-            clearStream = stream.replacingOccurrences(
-                of: "hls-fairplay.ism",
-                with: "main.ism",
-                options: [.caseInsensitive]
-            )
-        } else if lowercased.contains("fairplay") {
-            throw PlaybackFailure.unavailableClearStream
-        } else {
-            clearStream = stream
-        }
-        let cleanToken = token.drop(while: { $0 == "?" || $0 == "&" })
-        let separator = clearStream.contains("?") ? "&" : "?"
-        guard let url = URL(string: clearStream + separator + cleanToken), url.scheme == "https" else {
-            throw PlaybackFailure.invalidURL
-        }
-        return url
-    }
 }
 
 private struct PrePlayerResponse: Decodable, Sendable {
@@ -388,28 +426,80 @@ private struct CaronteResponse: Decodable, Sendable {
         let vtt: String?
     }
 
+    struct FairPlayDTO: Decodable, Sendable {
+        /// License server (`lurl`) — a templated URL with a `{pid}` placeholder.
+        let lurl: String?
+        /// Application certificate (`curl`).
+        let curl: String?
+    }
+
+    struct DRMDTO: Decodable, Sendable {
+        let fairplay: FairPlayDTO?
+    }
+
     struct Wrapper: Decodable, Sendable {
         let dls: [Delivery]?
         let bbx: String?
         let subtitles: [SubtitleDTO]?
+        let drm: DRMDTO?
     }
 
     let dls: [Delivery]?
     let bbx: String?
     let subtitles: [SubtitleDTO]?
+    let drm: DRMDTO?
     let response: Wrapper?
 
     var stream: String? { dls?.first?.stream ?? response?.dls?.first?.stream }
     var resolvedBBX: String? { bbx ?? response?.bbx }
     var resolvedSubtitles: [SubtitleDTO] { subtitles ?? response?.subtitles ?? [] }
+    var resolvedFairPlay: FairPlayDTO? { drm?.fairplay ?? response?.drm?.fairplay }
 
     init(from decoder: Decoder) throws {
-        enum CodingKeys: String, CodingKey { case dls, bbx, subtitles, response }
+        enum CodingKeys: String, CodingKey { case dls, bbx, subtitles, drm, response }
         let container = try decoder.container(keyedBy: CodingKeys.self)
         dls = try? container.decode([Delivery].self, forKey: .dls)
         subtitles = try? container.decode([SubtitleDTO].self, forKey: .subtitles)
         bbx = try? container.decode(String.self, forKey: .bbx)
+        drm = try? container.decode(DRMDTO.self, forKey: .drm)
         response = try? container.decode(Wrapper.self, forKey: .response)
+    }
+
+    /// Builds the FairPlay parameters for a DRM-protected stream from the caronte `drm.fairplay`
+    /// block, resolving the license URL's `{pid}` placeholder.
+    ///
+    /// - Note: the caronte/mab delivery flow this app uses (unlike the official web player's
+    ///   theplatform SMIL flow) never surfaces theplatform's release `pid`. The best per-media
+    ///   identifier available here is the packager asset GUID embedded in the stream path, which
+    ///   is substituted below. If the key server rejects it, this substitution is the single
+    ///   place to revise — everything downstream (SPC/CKC exchange, player wiring) is unaffected.
+    func fairPlayDRM(streamURL: String) -> FairPlayDRM? {
+        guard let fairplay = resolvedFairPlay,
+              let curl = fairplay.curl?.trimmedNonEmpty,
+              let certificateURL = URL(string: curl), certificateURL.scheme == "https",
+              let lurl = fairplay.lurl?.trimmedNonEmpty else {
+            return nil
+        }
+        let pid = Self.assetGUID(from: streamURL) ?? ""
+        let resolved = lurl
+            .replacingOccurrences(of: "{pid}", with: pid)
+            .replacingOccurrences(of: "{beToken}", with: "")
+        guard let licenseURL = URL(string: resolved), licenseURL.scheme == "https" else {
+            return nil
+        }
+        return FairPlayDRM(
+            certificateURL: certificateURL,
+            licenseURL: licenseURL,
+            licenseHeaders: APIConfiguration.deliveryHeaders
+        )
+    }
+
+    /// Extracts the packager asset UUID from a stream path such as
+    /// `…/bitmovin/d6/92/d6925c79-1602-4efd-bb82-6c3deb92aa9f/hls-fairplay.ism/…`.
+    private static func assetGUID(from streamURL: String) -> String? {
+        let pattern = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+        guard let range = streamURL.range(of: pattern, options: .regularExpression) else { return nil }
+        return String(streamURL[range])
     }
 }
 

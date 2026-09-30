@@ -78,6 +78,18 @@ struct SubtitleTrack: Hashable, Sendable {
     let languageTag: String
 }
 
+/// FairPlay Streaming parameters for a DRM-protected stream. Present only when the CDN offers
+/// no clear variant beside the encrypted one, so AVPlayer must acquire a content key. The URLs
+/// come straight from Mediaset's own caronte delivery response (`drm.fairplay`).
+struct FairPlayDRM: Sendable {
+    /// The provider's FairPlay application certificate (`drm.fairplay.curl`).
+    let certificateURL: URL
+    /// The key server the SPC is POSTed to, already resolved (`drm.fairplay.lurl`).
+    let licenseURL: URL
+    /// Headers to send with the license POST (same session/referer profile as playback).
+    let licenseHeaders: [String: String]
+}
+
 struct ResolvedStream: Identifiable, Sendable {
     let id = UUID()
     let title: String
@@ -90,6 +102,31 @@ struct ResolvedStream: Identifiable, Sendable {
     /// The catalog item's stable id (`MediaCard.id`) — used to save/resume watch progress.
     /// `nil` for live channels, which aren't resumable.
     let contentID: String?
+    /// FairPlay parameters when the stream is DRM-protected; `nil` for clear streams (the
+    /// common case). Set only by the FairPlay-only fallback in `MediasetStreamResolver`.
+    let drm: FairPlayDRM?
+
+    init(
+        title: String,
+        url: URL,
+        headers: [String: String],
+        allowsHeaderFallback: Bool,
+        subtitles: [SubtitleTrack],
+        artworkURL: URL?,
+        isLive: Bool,
+        contentID: String?,
+        drm: FairPlayDRM? = nil
+    ) {
+        self.title = title
+        self.url = url
+        self.headers = headers
+        self.allowsHeaderFallback = allowsHeaderFallback
+        self.subtitles = subtitles
+        self.artworkURL = artworkURL
+        self.isLive = isLive
+        self.contentID = contentID
+        self.drm = drm
+    }
 }
 
 struct WatchProgress: Codable, Hashable, Sendable {

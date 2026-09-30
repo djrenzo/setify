@@ -14,6 +14,7 @@ final class AppModel {
     let favorites: FavoritesStore
     let watchProgress: WatchProgressStore
     let downloads: DownloadStore
+    let drmRegistry: DRMRegistry
 
     init(
         channels: ChannelStore,
@@ -25,7 +26,8 @@ final class AppModel {
         catalog: CatalogEnvironment,
         favorites: FavoritesStore,
         watchProgress: WatchProgressStore,
-        downloads: DownloadStore
+        downloads: DownloadStore,
+        drmRegistry: DRMRegistry
     ) {
         self.channels = channels
         self.search = search
@@ -37,6 +39,7 @@ final class AppModel {
         self.favorites = favorites
         self.watchProgress = watchProgress
         self.downloads = downloads
+        self.drmRegistry = drmRegistry
     }
 
     static func live() -> AppModel {
@@ -57,10 +60,12 @@ final class AppModel {
         )
         let searchStore = SearchStore(service: searchService)
         let watchProgress = WatchProgressStore(repository: JSONWatchProgressRepository())
+        let drmRegistry = DRMRegistry(repository: JSONDRMProtectedRepository())
         let playback = PlaybackCoordinator(
             resolver: resolver,
             identityService: identity,
-            progressStore: watchProgress
+            progressStore: watchProgress,
+            drmRegistry: drmRegistry
         )
         return AppModel(
             channels: channelStore,
@@ -72,7 +77,12 @@ final class AppModel {
             catalog: CatalogEnvironment.live(client: client),
             favorites: FavoritesStore(repository: JSONFavoritesRepository()),
             watchProgress: watchProgress,
-            downloads: DownloadStore(repository: JSONDownloadsRepository(), resolver: resolver)
+            downloads: DownloadStore(
+                repository: JSONDownloadsRepository(),
+                resolver: resolver,
+                drmRegistry: drmRegistry
+            ),
+            drmRegistry: drmRegistry
         )
     }
 }

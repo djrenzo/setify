@@ -54,6 +54,7 @@ final class DownloadStore {
 
     private let repository: any DownloadsRepository
     private let resolver: any StreamResolving
+    private let drmRegistry: DRMRegistry
     private let engine: DownloadEngine
     private var isLoaded = false
     private var pending: [String: PendingDownload] = [:]
@@ -63,9 +64,14 @@ final class DownloadStore {
     private(set) var activeProgress: [String: Double] = [:]
     private(set) var failedIDs: Set<String> = []
 
-    init(repository: any DownloadsRepository, resolver: any StreamResolving) {
+    init(
+        repository: any DownloadsRepository,
+        resolver: any StreamResolving,
+        drmRegistry: DRMRegistry
+    ) {
         self.repository = repository
         self.resolver = resolver
+        self.drmRegistry = drmRegistry
         engine = DownloadEngine()
 
         engine.onProgress = { [weak self] contentID, fraction in
@@ -98,6 +104,8 @@ final class DownloadStore {
     func startDownload(card: MediaCard) {
         let contentID = card.id
         guard downloads[contentID] == nil, activeProgress[contentID] == nil else { return }
+        // Already known to be FairPlay-only — those can't be saved for offline playback.
+        guard !drmRegistry.isProtected(contentID) else { return }
         DownloadNotifier.requestAuthorizationIfNeeded()
         activeProgress[contentID] = 0
         failedIDs.remove(contentID)
@@ -111,6 +119,15 @@ final class DownloadStore {
             guard let self else { return }
             do {
                 let stream = try await resolver.resolve(.video(card)) { _ in }
+                // Discovered at resolve time that it's FairPlay-only — mark it and back out of
+                // the download quietly; the row will switch to the DRM badge on its own.
+                if stream.drm != nil {
+                    drmRegistry.mark(contentID)
+                    pending.removeValue(forKey: contentID)
+                    activeProgress.removeValue(forKey: contentID)
+                    DownloadNotifier.clearProgress(contentID: contentID)
+                    return
+                }
                 if let subtitleURL = stream.subtitles.first?.url {
                     let path = await downloadSubtitle(contentID: contentID, url: subtitleURL)
                     pending[contentID]?.subtitlePath = path

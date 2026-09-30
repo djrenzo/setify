@@ -8,6 +8,11 @@ import UIKit
 struct PlayerTransport {
     let item: AVPlayerItem
     let resourceLoader: HeaderResourceLoader?
+    /// Retained for the lifetime of the item — a FairPlay content key session holds its delegate
+    /// weakly, and both must outlive the asset for key requests to be answered. `nil` for the
+    /// usual clear streams.
+    var contentKeySession: AVContentKeySession?
+    var keyDelegate: FairPlayContentKeyDelegate?
 }
 
 @MainActor
@@ -21,7 +26,13 @@ struct AVPlayerItemFactory: PlayerItemBuilding {
     func standardItem(for stream: ResolvedStream) -> PlayerTransport {
         let options = ["AVURLAssetHTTPHeaderFieldsKey": stream.headers]
         let asset = AVURLAsset(url: stream.url, options: options)
-        return PlayerTransport(item: AVPlayerItem(asset: asset), resourceLoader: nil)
+        let drm = Self.attachDRM(for: stream, to: asset)
+        return PlayerTransport(
+            item: AVPlayerItem(asset: asset),
+            resourceLoader: nil,
+            contentKeySession: drm?.session,
+            keyDelegate: drm?.delegate
+        )
     }
 
     func fallbackItem(for stream: ResolvedStream) -> PlayerTransport? {
@@ -29,7 +40,28 @@ struct AVPlayerItemFactory: PlayerItemBuilding {
         let loader = HeaderResourceLoader(headers: stream.headers)
         let asset = AVURLAsset(url: url)
         asset.resourceLoader.setDelegate(loader, queue: loader.resourceQueue)
-        return PlayerTransport(item: AVPlayerItem(asset: asset), resourceLoader: loader)
+        let drm = Self.attachDRM(for: stream, to: asset)
+        return PlayerTransport(
+            item: AVPlayerItem(asset: asset),
+            resourceLoader: loader,
+            contentKeySession: drm?.session,
+            keyDelegate: drm?.delegate
+        )
+    }
+
+    /// Creates a FairPlay content key session bound to `asset` when the stream is DRM-protected.
+    /// The recipient must be added before the item starts loading so AVFoundation routes the
+    /// stream's `skd://` key requests to our delegate instead of failing them.
+    private static func attachDRM(
+        for stream: ResolvedStream,
+        to asset: AVURLAsset
+    ) -> (session: AVContentKeySession, delegate: FairPlayContentKeyDelegate)? {
+        guard let drm = stream.drm else { return nil }
+        let session = AVContentKeySession(keySystem: .fairPlayStreaming)
+        let delegate = FairPlayContentKeyDelegate(drm: drm)
+        session.setDelegate(delegate, queue: DispatchQueue(label: "com.superapp.mitele.fairplay"))
+        session.addContentKeyRecipient(asset)
+        return (session, delegate)
     }
 }
 

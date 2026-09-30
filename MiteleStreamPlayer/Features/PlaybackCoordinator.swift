@@ -12,6 +12,7 @@ final class PlaybackCoordinator {
     private let resolver: any StreamResolving
     private let identityService: GigyaIdentityService
     private let progressStore: WatchProgressStore
+    private let drmRegistry: DRMRegistry
     private var task: Task<Void, Never>?
     private var clearsSessionOnDismiss = false
 
@@ -27,11 +28,13 @@ final class PlaybackCoordinator {
     init(
         resolver: any StreamResolving,
         identityService: GigyaIdentityService,
-        progressStore: WatchProgressStore
+        progressStore: WatchProgressStore,
+        drmRegistry: DRMRegistry
     ) {
         self.resolver = resolver
         self.identityService = identityService
         self.progressStore = progressStore
+        self.drmRegistry = drmRegistry
     }
 
     /// The current session (if any) keeps playing while the new request resolves, and is only
@@ -108,6 +111,9 @@ final class PlaybackCoordinator {
     }
 
     private func startSession(for stream: ResolvedStream) {
+        if stream.drm != nil, let contentID = stream.contentID {
+            drmRegistry.mark(contentID)
+        }
         session?.stop()
         clearsSessionOnDismiss = false
         let newSession = PlayerSession(stream: stream, progressStore: progressStore)
