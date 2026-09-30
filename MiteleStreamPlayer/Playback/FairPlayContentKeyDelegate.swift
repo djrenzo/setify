@@ -1,5 +1,22 @@
 import AVFoundation
 import Foundation
+import os
+
+/// Step-by-step trace of the FairPlay exchange, visible in the Xcode console and Console.app
+/// (subsystem `com.superapp.mitele`, category `fairplay`) and mirrored into the in-app
+/// `DiagnosticsLog` so it can be read and copied from the player's failure overlay. The license
+/// server's status + body is the decisive diagnostic when a DRM-only episode won't start.
+private let fairPlayLog = Logger(subsystem: "com.superapp.mitele", category: "fairplay")
+
+private func fpTrace(_ message: String) {
+    fairPlayLog.info("\(message, privacy: .public)")
+    DiagnosticsLog.record(message)
+}
+
+private func fpError(_ message: String) {
+    fairPlayLog.error("\(message, privacy: .public)")
+    DiagnosticsLog.record("⚠️ \(message)")
+}
 
 /// Handles FairPlay Streaming key requests for a single DRM-protected `AVURLAsset`.
 ///
@@ -59,10 +76,23 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
     }
 
     private func handle(_ keyRequest: AVContentKeyRequest) {
+        fpTrace("key request received, identifier=\(String(describing: keyRequest.identifier))")
         guard let identifier = keyRequest.identifier as? String,
               let contentID = Self.contentKeyID(from: identifier),
               let assetID = contentID.data(using: .utf8) else {
+            fpError("unusable key identifier — cannot build content id")
             keyRequest.processContentKeyResponseError(FairPlayError.invalidKeyIdentifier)
+            return
+        }
+        fpTrace("content id=\(contentID)")
+
+        let appCertificate: Data
+        do {
+            appCertificate = try certificate()
+            fpTrace("certificate loaded, \(appCertificate.count) bytes")
+        } catch {
+            fpError("certificate fetch failed: \(String(describing: error))")
+            keyRequest.processContentKeyResponseError(error)
             return
         }
 
@@ -71,19 +101,22 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
         nonisolated(unsafe) let request = keyRequest
 
         request.makeStreamingContentKeyRequestData(
-            forApp: (try? certificate()) ?? Data(),
+            forApp: appCertificate,
             contentIdentifier: assetID,
             options: [AVContentKeyRequestProtocolVersionsKey: [1]]
         ) { [weak self] spcData, error in
             guard let self else { return }
             if let error {
+                fpError("SPC generation failed: \(String(describing: error))")
                 request.processContentKeyResponseError(error)
                 return
             }
             guard let spcData else {
+                fpError("SPC generation returned no data")
                 request.processContentKeyResponseError(FairPlayError.missingSPC)
                 return
             }
+            fpTrace("SPC generated, \(spcData.count) bytes")
             Task { await self.requestKey(spc: spcData, keyRequest: request) }
         }
     }
@@ -91,9 +124,11 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
     private func requestKey(spc: Data, keyRequest: AVContentKeyRequest) async {
         do {
             let ckc = try await fetchCKC(spc: spc)
+            fpTrace("CKC decoded, \(ckc.count) bytes — handing key to player ✅")
             let response = AVContentKeyResponse(fairPlayStreamingKeyResponseData: ckc)
             keyRequest.processContentKeyResponse(response)
         } catch {
+            fpError("license/CKC step failed: \(String(describing: error))")
             keyRequest.processContentKeyResponseError(error)
         }
     }
@@ -111,9 +146,13 @@ final class FairPlayContentKeyDelegate: NSObject, AVContentKeySessionDelegate, @
         let body = "spc=\(spc.base64EncodedString().urlFormEncoded)"
         request.httpBody = body.data(using: .utf8)
 
+        fpTrace("POST license: \(drm.licenseURL.absoluteString)")
         let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw FairPlayError.licenseServer((response as? HTTPURLResponse)?.statusCode ?? -1)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        let bodyText = String(data: data.prefix(600), encoding: .utf8) ?? "<\(data.count) bytes non-utf8>"
+        fpTrace("license status=\(status) body=\(bodyText)")
+        guard (200..<300).contains(status) else {
+            throw FairPlayError.licenseServer(status)
         }
         return try Self.decodeCKC(from: data)
     }

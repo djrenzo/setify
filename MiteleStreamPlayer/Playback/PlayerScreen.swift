@@ -1,5 +1,6 @@
 import AVKit
 import SwiftUI
+import UIKit
 
 @MainActor
 struct PlayerScreen: View {
@@ -172,6 +173,8 @@ private struct PlayerFailureView: View {
     let failure: PlaybackFailure
     let onClose: () -> Void
 
+    @State private var showsDiagnostics = false
+
     var body: some View {
         VStack {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -183,14 +186,57 @@ private struct PlayerFailureView: View {
                 .font(.callout)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
-            Button("Cerrar", action: onClose)
-                .buttonStyle(.borderedProminent)
-                .tint(Color.cinemaAccent)
+            HStack {
+                if !DiagnosticsLog.shared.isEmpty {
+                    Button("Diagnóstico") { showsDiagnostics = true }
+                        .buttonStyle(.bordered)
+                        .tint(.white)
+                }
+                Button("Cerrar", action: onClose)
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.cinemaAccent)
+            }
         }
         .foregroundStyle(.white)
         .padding(28)
         .frame(maxWidth: 340)
         .background(Color.cinemaSurface.opacity(0.96), in: .rect(cornerRadius: 24))
+        .sheet(isPresented: $showsDiagnostics) {
+            DiagnosticsView(log: DiagnosticsLog.shared)
+        }
+    }
+}
+
+/// Read-only view of the captured FairPlay trace with a one-tap copy — shown from a DRM playback
+/// failure so the log can be pasted into a report without attaching Xcode.
+private struct DiagnosticsView: View {
+    let log: DiagnosticsLog
+    @Environment(\.dismiss) private var dismiss
+    @State private var didCopy = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(log.text.isEmpty ? "Sin registros." : log.text)
+                    .font(.system(.footnote, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+            }
+            .navigationTitle("Diagnóstico FairPlay")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cerrar") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(didCopy ? "Copiado" : "Copiar") {
+                        UIPasteboard.general.string = log.text
+                        didCopy = true
+                    }
+                }
+            }
+        }
     }
 }
 
